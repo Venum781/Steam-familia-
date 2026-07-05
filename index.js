@@ -27,6 +27,9 @@ const DONO_ID = "336204841972137995";
 
 const DB_FILE = path.join(__dirname, 'steam_achievements_db.json');
 
+// 🔹 Cache de compatibilidade
+const compatibilidadeCache = {};
+
 // 🔹 Mapeamento de usuários
 const steamNames = {
   "76561198127320557": "Gardemi",
@@ -267,91 +270,85 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia (COM MÚLTIPLAS VARIAÇÕES)
+// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia (COM USER-AGENT E CACHE)
 // 🔹 ============================================
 async function verificarCompatibilidadeFamilia(appid) {
+  // 🔹 Verifica se já está em cache
+  if (compatibilidadeCache[appid] !== undefined) {
+    console.log(`📦 Usando cache para ${appid}: ${compatibilidadeCache[appid]}`);
+    return compatibilidadeCache[appid];
+  }
+  
   try {
     const storeUrl = `https://store.steampowered.com/app/${appid}`;
     console.log(`🌐 Verificando compatibilidade: ${storeUrl}`);
     
-    const response = await fetchWithTimeout(storeUrl, 8000);
+    // 🔹 SIMULA UM NAVEGADOR REAL
+    const response = await fetch(storeUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Connection': 'keep-alive'
+      }
+    });
+    
     const html = await response.text();
     
-    // 🔹 Lista de palavras-chave que indicam COMPATIBILIDADE
-    const palavrasCompatibilidade = [
-      'Compartilhamento em família',
-      'Family Sharing',
-      'compartilhamento familiar',
-      'family sharing',
-      'Compartilhamento familiar',
-      'Family Share',
-      'family share'
-    ];
+    // 🔹 PROCURA POR "Compartilhamento em família" NA PÁGINA
+    const temCompartilhamento = 
+      html.includes('Compartilhamento em família') || 
+      html.includes('Family Sharing') ||
+      html.includes('compartilhamento familiar') ||
+      html.includes('family sharing') ||
+      html.includes('Compartilhamento familiar');
     
-    // 🔹 Lista de palavras-chave que indicam INCOMPATIBILIDADE
-    const palavrasIncompatibilidade = [
-      'Compartilhamento em família não disponível',
-      'Family Sharing not available',
-      'não é compatível com Compartilhamento em Família',
-      'not compatible with Family Sharing',
-      'não suporta Compartilhamento em Família',
-      'does not support Family Sharing'
-    ];
+    // 🔹 VERIFICA SE ESTÁ MARCADO COMO NÃO DISPONÍVEL
+    const naoDisponivel = 
+      html.includes('Compartilhamento em família não disponível') ||
+      html.includes('Family Sharing not available') ||
+      html.includes('não é compatível com Compartilhamento em Família') ||
+      html.includes('not compatible with Family Sharing');
     
-    // 🔹 Verifica compatibilidade
-    let temCompartilhamento = false;
-    for (const palavra of palavrasCompatibilidade) {
-      if (html.includes(palavra)) {
-        temCompartilhamento = true;
-        console.log(`   🔍 Encontrou: "${palavra}"`);
-        break;
-      }
-    }
+    // 🔹 VERIFICA SE É FREE-TO-PLAY (NÃO É COMPATÍVEL)
+    const isFree = html.includes('Grátis') || html.includes('Free');
     
-    // 🔹 Verifica incompatibilidade
-    let temIncompatibilidade = false;
-    for (const palavra of palavrasIncompatibilidade) {
-      if (html.includes(palavra)) {
-        temIncompatibilidade = true;
-        console.log(`   ⚠️ Encontrou: "${palavra}"`);
-        break;
-      }
-    }
+    // 🔹 VERIFICA SE REQUER CONTA DE TERCEIROS
+    const requerConta = 
+      html.includes('Requer conta de terceiros') ||
+      html.includes('Requires third-party account') ||
+      html.includes('Requer conta da') ||
+      html.includes('Requires account');
     
-    console.log(`🔍 Resultado: temCompartilhamento=${temCompartilhamento}, temIncompatibilidade=${temIncompatibilidade}`);
+    console.log(`🔍 Resultado: temCompartilhamento=${temCompartilhamento}, naoDisponivel=${naoDisponivel}, isFree=${isFree}, requerConta=${requerConta}`);
     
-    // 🔹 Se tiver a informação e não estiver marcado como não disponível, é compatível
-    if (temCompartilhamento && !temIncompatibilidade) {
+    let resultado;
+    
+    // 🔹 SE TIVER A INFORMAÇÃO E NÃO ESTIVER MARCADO COMO NÃO DISPONÍVEL, É COMPATÍVEL
+    if (temCompartilhamento && !naoDisponivel) {
+      resultado = true;
       console.log(`✅ Jogo ${appid} é compatível com Família Steam`);
-      return true;
-    } else if (temIncompatibilidade) {
+    } else if (naoDisponivel) {
+      resultado = false;
       console.log(`❌ Jogo ${appid} NÃO é compatível com Família Steam`);
-      return false;
+    } else if (isFree) {
+      resultado = false;
+      console.log(`❌ Jogo ${appid} é Free-to-Play - NÃO compatível`);
+    } else if (requerConta) {
+      resultado = false;
+      console.log(`❌ Jogo ${appid} requer conta de terceiros - NÃO compatível`);
     } else {
-      // 🔹 Se não encontrou a informação, verifica se tem indicações de que NÃO é compatível
-      const temRequisitoConta = 
-        html.includes('Requer conta de terceiros') ||
-        html.includes('Requires third-party account') ||
-        html.includes('Requer conta da') ||
-        html.includes('Requires account');
-      
-      const temDRMRestritivo = 
-        html.includes('Denuvo') ||
-        html.includes('SafeDisc') ||
-        html.includes('SecuROM');
-      
-      if (temRequisitoConta || temDRMRestritivo) {
-        console.log(`❌ Jogo ${appid} NÃO é compatível (requer conta ou DRM)`);
-        return false;
-      }
-      
-      // 🔹 Se não encontrou nada, assume que NÃO é compatível
-      console.log(`⚠️ Jogo ${appid} - ASSUMINDO INCOMPATÍVEL`);
-      return false;
+      resultado = true;
+      console.log(`⚠️ Jogo ${appid} - NÃO ENCONTRADO, assumindo compatível`);
     }
+    
+    // 🔹 Salva no cache
+    compatibilidadeCache[appid] = resultado;
+    return resultado;
     
   } catch (error) {
     console.error(`❌ Erro ao verificar compatibilidade:`, error.message);
+    compatibilidadeCache[appid] = true;
     return true;
   }
 }
