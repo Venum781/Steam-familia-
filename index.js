@@ -264,7 +264,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsCompletas (CORRIGIDA)
+// 🔹 FUNÇÃO: buscarDLCsCompletas
 // 🔹 ============================================
 async function buscarDLCsCompletas(appid) {
   try {
@@ -279,19 +279,10 @@ async function buscarDLCsCompletas(appid) {
     
     const gameData = data[appid].data;
     
-    // 🔹 Busca TODOS os conteúdos adicionais (DLCs, expansões, etc)
-    // Isso inclui tanto a lista 'dlc' quanto 'fullgame' para identificar conteúdos adicionais
     const dlcsIds = [];
     
-    // Verifica se tem DLCs listadas
     if (gameData.dlc && gameData.dlc.length > 0) {
       dlcsIds.push(...gameData.dlc);
-    }
-    
-    // Também verifica se é uma DLC de outro jogo (fullgame)
-    if (gameData.fullgame) {
-      // Se tem fullgame, significa que é uma DLC/expansão
-      // Não adicionamos pois queremos as DLCs do jogo principal
     }
     
     if (dlcsIds.length === 0) {
@@ -310,8 +301,6 @@ async function buscarDLCsCompletas(appid) {
         
         if (dlcData[dlcAppid]?.success) {
           const dlcInfo = dlcData[dlcAppid].data;
-          // 🔹 Verifica se é realmente uma DLC/conteúdo adicional
-          // Alguns jogos listam pacotes como DLCs, então filtramos
           if (dlcInfo.type === 'dlc' || dlcInfo.type === 'expansion' || dlcInfo.type === 'game') {
             dlcsCompletas.push({
               appid: dlcAppid,
@@ -334,7 +323,7 @@ async function buscarDLCsCompletas(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogoFamilia (CORRIGIDA)
+// 🔹 FUNÇÃO: verificarJogoFamilia
 // 🔹 ============================================
 async function verificarJogoFamilia(appid) {
   const resultados = [];
@@ -386,7 +375,7 @@ async function verificarJogoFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: formatarRespostaJogo (ATUALIZADA)
+// 🔹 FUNÇÃO: formatarRespostaJogo
 // 🔹 ============================================
 function formatarRespostaJogo(jogo, donos) {
   const embed = new EmbedBuilder()
@@ -437,37 +426,73 @@ function formatarRespostaJogo(jogo, donos) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarSugestoesJogos (CORRIGIDA)
+// 🔹 FUNÇÃO: buscarSugestoesJogos (FILTRO POR INÍCIO)
 // 🔹 ============================================
 async function buscarSugestoesJogos(termo) {
   try {
-    if (!termo || termo.length < 2) {
+    if (!termo || termo.length === 0) {
       return [
         { name: 'Elden Ring', value: 'Elden Ring' },
         { name: 'Counter-Strike 2', value: 'Counter-Strike 2' },
         { name: 'Dying Light', value: 'Dying Light' },
         { name: 'Sonic Frontiers', value: 'Sonic Frontiers' },
-        { name: 'Stardew Valley', value: 'Stardew Valley' }
+        { name: 'Stardew Valley', value: 'Stardew Valley' },
+        { name: 'Hollow Knight', value: 'Hollow Knight' },
+        { name: 'Cyberpunk 2077', value: 'Cyberpunk 2077' },
+        { name: 'Grand Theft Auto V', value: 'Grand Theft Auto V' },
+        { name: 'Red Dead Redemption 2', value: 'Red Dead Redemption 2' },
+        { name: 'The Witcher 3', value: 'The Witcher 3' }
       ];
     }
 
-    const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(termo)}&l=portuguese&cc=BR`;
+    const termoLower = termo.toLowerCase();
+    const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(termo)}&l=portuguese&cc=BR&max=50`;
     const response = await fetchWithTimeout(url, 3000);
     const data = await response.json();
     
     if (data.items && data.items.length > 0) {
+      // 🔹 PRIORIDADE 1: Jogos que COMEÇAM com o termo
       const jogos = data.items
-        .filter(item => item.type === 'game')
-        .slice(0, 10)
+        .filter(item => {
+          const nomeLower = item.name.toLowerCase();
+          return (item.type === 'game' || item.type === 'dlc') && 
+                 nomeLower.startsWith(termoLower);
+        })
+        .slice(0, 25)
         .map(item => ({
           name: item.name,
           value: item.name
         }));
       
+      // 🔹 Se não encontrou jogos que começam com o termo, busca os que contêm
+      if (jogos.length === 0) {
+        const jogosContem = data.items
+          .filter(item => {
+            const nomeLower = item.name.toLowerCase();
+            return (item.type === 'game' || item.type === 'dlc') && 
+                   nomeLower.includes(termoLower);
+          })
+          .slice(0, 15)
+          .map(item => ({
+            name: item.name,
+            value: item.name
+          }));
+        
+        if (jogosContem.length > 0) {
+          return jogosContem;
+        }
+      }
+      
       return jogos;
     }
     
-    return [];
+    return [
+      { name: 'Elden Ring', value: 'Elden Ring' },
+      { name: 'Counter-Strike 2', value: 'Counter-Strike 2' },
+      { name: 'Dying Light', value: 'Dying Light' },
+      { name: 'Sonic Frontiers', value: 'Sonic Frontiers' },
+      { name: 'Stardew Valley', value: 'Stardew Valley' }
+    ];
   } catch (error) {
     console.error('❌ Erro ao buscar sugestões:', error);
     return [];
@@ -778,7 +803,7 @@ async function checkSteamGames() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: registrarComandos (REGISTRO GLOBAL)
+// 🔹 FUNÇÃO: registrarComandos
 // 🔹 ============================================
 async function registrarComandos() {
   try {
@@ -798,15 +823,13 @@ async function registrarComandos() {
       }
     ];
 
-    // 🔹 REGISTRA GLOBALMENTE (demora até 1 hora)
     await client.application.commands.set(commands);
-    console.log('✅ /tem registrado GLOBALMENTE! (pode levar até 1 hora para aparecer)');
+    console.log('✅ /tem registrado GLOBALMENTE!');
     
-    // 🔹 TAMBÉM registra no servidor atual (mais rápido)
     const guild = client.guilds.cache.first();
     if (guild) {
       await guild.commands.set(commands);
-      console.log(`✅ /tem registrado no servidor: ${guild.name} (imediato)`);
+      console.log(`✅ /tem registrado no servidor: ${guild.name}`);
     }
   } catch (error) {
     console.error('❌ Erro ao registrar /tem:', error);
@@ -824,8 +847,8 @@ client.on('interactionCreate', async (interaction) => {
       
       try {
         const sugestoes = await buscarSugestoesJogos(valorDigitado);
+        console.log(`🔍 Autocomplete para "${valorDigitado}": ${sugestoes.length} sugestões`);
         await interaction.respond(sugestoes);
-        console.log(`🔍 Sugestões para "${valorDigitado}": ${sugestoes.length}`);
       } catch (error) {
         console.error('❌ Erro no autocomplete:', error);
         await interaction.respond([]);
