@@ -843,12 +843,9 @@ async function checkSteamGames() {
       console.log('✅ PRIMEIRA VERIFICAÇÃO CONCLUÍDA!');
       console.log('🔍 Monitorando NOVAS conquistas em tempo real!');
       salvarDB(db);
-      try {
-        const channelConquistas = client.channels.cache.get(CHANNEL_CONQUISTAS);
-        if (channelConquistas) {
-          await channelConquistas.send('✅ **SISTEMA INICIALIZADO!**\n📊 Conquistas salvas\n🔍 Monitorando novas conquistas!');
-        }
-      } catch (e) {}
+      
+      // 🔹 REMOVIDO: Mensagem no canal de conquistas
+      console.log('✅ SISTEMA INICIALIZADO! Conquistas salvas. Monitorando novas conquistas!');
     }
 
     const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
@@ -1042,7 +1039,7 @@ process.on('SIGTERM', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 READY
+// 🔹 READY (COM DM PARA O DONO E SEM SPAM NO CANAL)
 // 🔹 ============================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -1053,6 +1050,7 @@ client.once('ready', async () => {
   console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
   console.log(`💾 Banco de dados: ${DB_FILE}`);
 
+  // 🔹 Envia mensagem de inicialização APENAS para o dono via DM
   try {
     const dono = await client.users.fetch(DONO_ID);
     if (dono) {
@@ -1063,10 +1061,8 @@ client.once('ready', async () => {
     console.error('❌ Erro ao enviar DM para o dono:', error);
   }
 
-  const channelConquistas = client.channels.cache.get(CHANNEL_CONQUISTAS);
-  if (channelConquistas) {
-    await channelConquistas.send(`🏆 **SISTEMA DE CONQUISTAS ATIVADO!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n📝 Salvando conquistas existentes...`);
-  }
+  // 🔹 REMOVIDO: Mensagem no canal de conquistas
+  console.log(`🏆 SISTEMA DE CONQUISTAS ATIVADO! Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos`);
 
   console.log('🎮 Iniciando verificação inicial...');
   await checkSteamGames();
