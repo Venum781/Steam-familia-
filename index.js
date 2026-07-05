@@ -22,6 +22,9 @@ const CHANNEL_NOTIFICACOES = process.env.CHANNEL_ID;
 const CHANNEL_RANKING = "1523067407474757672";
 const CHANNEL_CONQUISTAS = "1523080625802711150";
 
+// 🔹 ID do dono do bot (para receber DMs de status)
+const DONO_ID = "336204841972137995";
+
 const DB_FILE = path.join(__dirname, 'steam_achievements_db.json');
 
 // 🔹 Mapeamento de usuários
@@ -264,109 +267,50 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsCompletas (VIA SCRAPING DA LOJA)
+// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia
 // 🔹 ============================================
-async function buscarDLCsCompletas(appid) {
+async function verificarCompatibilidadeFamilia(appid) {
   try {
-    console.log(`🔍 Buscando conteúdos adicionais para ${appid} via página da loja...`);
+    const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
+    const response = await fetchWithTimeout(url, 5000);
+    const data = await response.json();
     
-    const dlcsCompletas = [];
-    let gameName = `Jogo ${appid}`;
-    
-    // 🔹 Nome do jogo
-    try {
-      const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
-      const response = await fetchWithTimeout(url, 3000);
-      const data = await response.json();
-      if (data[appid]?.success) {
-        gameName = data[appid].data.name;
-      }
-    } catch (error) {
-      console.log(`⚠️ API falhou:`, error.message);
-    }
-    
-    // 🔹 Acessar a página da loja
-    const storeUrl = `https://store.steampowered.com/app/${appid}`;
-    console.log(`🌐 Acessando: ${storeUrl}`);
-    
-    const storeResponse = await fetchWithTimeout(storeUrl, 10000);
-    const html = await storeResponse.text();
-    
-    // 🔹 Extrair TODOS os links de DLCs
-    const dlcIdsEncontrados = new Set();
-    let match;
-    
-    // Padrão 1: Links da loja
-    const dlcRegex = /store\.steampowered\.com\/app\/(\d+)\/?/g;
-    while ((match = dlcRegex.exec(html)) !== null) {
-      const foundAppid = parseInt(match[1]);
-      if (foundAppid !== appid) {
-        dlcIdsEncontrados.add(foundAppid);
-      }
-    }
-    
-    // Padrão 2: JSON com appid
-    const jsonRegex = /"appid"\s*:\s*(\d+)/g;
-    while ((match = jsonRegex.exec(html)) !== null) {
-      const foundAppid = parseInt(match[1]);
-      if (foundAppid !== appid) {
-        dlcIdsEncontrados.add(foundAppid);
-      }
-    }
-    
-    // Padrão 3: data-ds-appid
-    const dsRegex = /data-ds-appid="(\d+)"/g;
-    while ((match = dsRegex.exec(html)) !== null) {
-      const foundAppid = parseInt(match[1]);
-      if (foundAppid !== appid) {
-        dlcIdsEncontrados.add(foundAppid);
-      }
-    }
-    
-    if (dlcIdsEncontrados.size === 0) {
-      console.log(`ℹ️ ${gameName} - Nenhum conteúdo adicional encontrado na página`);
-      return [];
-    }
-    
-    console.log(`📦 ${gameName} - Encontrados ${dlcIdsEncontrados.size} conteúdo(s) na página`);
-    
-    // 🔹 Buscar nome de cada DLC
-    let count = 0;
-    for (const dlcAppid of dlcIdsEncontrados) {
-      if (count >= 30) {
-        console.log(`   ⏭️ Limite de 30 DLCs atingido`);
-        break;
-      }
+    if (data[appid]?.success) {
+      const gameData = data[appid].data;
       
-      try {
-        const dlcUrl = `https://store.steampowered.com/api/appdetails?appids=${dlcAppid}&l=portuguese`;
-        const dlcResponse = await fetchWithTimeout(dlcUrl, 3000);
-        const dlcData = await dlcResponse.json();
-        
-        if (dlcData[dlcAppid]?.success) {
-          const dlcInfo = dlcData[dlcAppid].data;
-          if (dlcInfo.type === 'dlc' || dlcInfo.type === 'expansion' || 
-              dlcInfo.type === 'game' || dlcInfo.type === 'bundle') {
-            dlcsCompletas.push({
-              appid: dlcAppid,
-              nome: dlcInfo.name || `Conteúdo ${dlcAppid}`,
-              capa: dlcInfo.header_image || dlcInfo.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${dlcAppid}/header.jpg`
-            });
-            console.log(`   ✅ ${count + 1}. ${dlcInfo.name}`);
-            count++;
-          }
-        }
-      } catch (error) {
-        console.error(`   ❌ Erro na DLC ${dlcAppid}:`, error.message);
+      const naoCompativel = 
+        gameData.is_free === true ||
+        (gameData.drm && gameData.drm.includes('Denuvo')) ||
+        (gameData.drm && gameData.drm.includes('第三方'));
+      
+      return !naoCompativel;
+    }
+    return true;
+  } catch (error) {
+    console.error(`❌ Erro ao verificar compatibilidade:`, error.message);
+    return true;
+  }
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: contarDLCs
+// 🔹 ============================================
+async function contarDLCs(appid) {
+  try {
+    const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
+    const response = await fetchWithTimeout(url, 5000);
+    const data = await response.json();
+    
+    if (data[appid]?.success) {
+      const gameData = data[appid].data;
+      if (gameData.dlc && gameData.dlc.length > 0) {
+        return gameData.dlc.length;
       }
     }
-    
-    console.log(`📦 Total de DLCs identificadas: ${dlcsCompletas.length}`);
-    return dlcsCompletas;
-    
+    return 0;
   } catch (error) {
-    console.error(`❌ Erro ao buscar conteúdos adicionais:`, error.message);
-    return [];
+    console.error(`❌ Erro ao contar DLCs:`, error.message);
+    return 0;
   }
 }
 
@@ -377,9 +321,6 @@ async function verificarJogoFamilia(appid) {
   const resultados = [];
   const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
   const apiKey = process.env.STEAM_KEY;
-  
-  const todasDLCs = await buscarDLCsCompletas(appid);
-  console.log(`📦 Total de DLCs para verificar: ${todasDLCs.length}`);
   
   for (const steamId of steamIds) {
     try {
@@ -394,23 +335,10 @@ async function verificarJogoFamilia(appid) {
           const userName = steamNames[steamId] || `Usuário ${steamId.substring(0, 8)}`;
           const discordId = discordUsers[steamId];
           
-          const dlcsDoUsuario = [];
-          if (todasDLCs.length > 0) {
-            for (const dlc of todasDLCs) {
-              const temDlc = data.response.games.some(g => g.appid === dlc.appid);
-              if (temDlc) {
-                dlcsDoUsuario.push(dlc);
-                console.log(`   ✅ ${userName} tem: ${dlc.nome}`);
-              }
-            }
-          }
-          
           resultados.push({
             nome: userName,
             discordId: discordId,
-            steamId: steamId,
-            dlcs: dlcsDoUsuario,
-            totalDlcs: dlcsDoUsuario.length
+            steamId: steamId
           });
         }
       }
@@ -425,7 +353,7 @@ async function verificarJogoFamilia(appid) {
 // 🔹 ============================================
 // 🔹 FUNÇÃO: formatarRespostaJogo
 // 🔹 ============================================
-function formatarRespostaJogo(jogo, donos) {
+function formatarRespostaJogo(jogo, donos, totalDLCs, compativel) {
   const embed = new EmbedBuilder()
     .setColor(donos.length > 0 ? 0x00FF00 : 0xFF0000)
     .setTitle(`${donos.length > 0 ? '✅' : '❌'} ${jogo.nome}`)
@@ -437,25 +365,34 @@ function formatarRespostaJogo(jogo, donos) {
     embed.setThumbnail(jogo.capa);
   }
   
+  if (!compativel) {
+    embed.addFields({
+      name: '⚠️ ATENÇÃO',
+      value: 'Este jogo **não é compatível com Compartilhamento em Família**.\nMotivo: Pode exigir conta de terceiros (EA, Ubisoft, etc) ou possui DRM que impede o compartilhamento.',
+      inline: false
+    });
+  }
+  
+  if (totalDLCs > 0) {
+    embed.addFields({
+      name: '📦 Conteúdos Adicionais (DLCs)',
+      value: `Este jogo possui **${totalDLCs}** DLC(s) disponível(is) na Steam.`,
+      inline: false
+    });
+  } else {
+    embed.addFields({
+      name: '📦 Conteúdos Adicionais (DLCs)',
+      value: 'Este jogo não possui DLCs listadas.',
+      inline: false
+    });
+  }
+  
   if (donos.length > 0) {
     let descricao = `🎮 **Encontrado na família!**\n👤 **${donos.length} membro(s) possui(em):**\n\n`;
     
     donos.forEach((dono, index) => {
       const mencao = dono.discordId ? `<@${dono.discordId}>` : dono.nome;
       descricao += `**${index + 1}. ${mencao}**\n`;
-      
-      if (dono.totalDlcs > 0) {
-        descricao += `   📦 Conteúdos Adicionais (${dono.totalDlcs}):\n`;
-        const dlcsMostrar = dono.dlcs.slice(0, 5);
-        dlcsMostrar.forEach(dlc => {
-          descricao += `      • ${dlc.nome}\n`;
-        });
-        if (dono.dlcs.length > 5) {
-          descricao += `      • + ${dono.dlcs.length - 5} mais\n`;
-        }
-      } else {
-        descricao += `   📦 Nenhum conteúdo adicional\n`;
-      }
       descricao += `\n`;
     });
     
@@ -474,7 +411,7 @@ function formatarRespostaJogo(jogo, donos) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarSugestoesJogos (FILTRO POR INÍCIO)
+// 🔹 FUNÇÃO: buscarSugestoesJogos
 // 🔹 ============================================
 async function buscarSugestoesJogos(termo) {
   try {
@@ -931,7 +868,10 @@ client.on('interactionCreate', async (interaction) => {
       }
       
       const donos = await verificarJogoFamilia(jogo.appid);
-      const embed = formatarRespostaJogo(jogo, donos);
+      const totalDLCs = await contarDLCs(jogo.appid);
+      const compativel = await verificarCompatibilidadeFamilia(jogo.appid);
+      
+      const embed = formatarRespostaJogo(jogo, donos, totalDLCs, compativel);
       
       await interaction.editReply({
         embeds: [embed]
@@ -957,7 +897,7 @@ client.on('messageCreate', async (message) => {
   }
   
   if (message.content.toLowerCase() === '!resetranking') {
-    if (message.author.id !== 'SEU_ID_DISCORD_AQUI') {
+    if (message.author.id !== DONO_ID) {
       await message.reply({
         content: '❌ Você não tem permissão para usar este comando!',
         ephemeral: true
@@ -999,7 +939,38 @@ client.on('messageCreate', async (message) => {
 });
 
 // 🔹 ============================================
-// 🔹 READY
+// 🔹 EVENTO: DESLIGAMENTO (ENVIA DM PARA O DONO)
+// 🔹 ============================================
+process.on('SIGINT', async () => {
+  console.log('⚠️ Bot sendo desligado...');
+  try {
+    const dono = await client.users.fetch(DONO_ID);
+    if (dono) {
+      await dono.send('🛑 **Bot Steam Família foi desligado!**');
+      console.log('📨 Mensagem de desligamento enviada para o dono via DM');
+    }
+  } catch (error) {
+    console.error('❌ Erro ao enviar DM de desligamento:', error);
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('⚠️ Bot sendo encerrado...');
+  try {
+    const dono = await client.users.fetch(DONO_ID);
+    if (dono) {
+      await dono.send('🛑 **Bot Steam Família foi encerrado!**');
+      console.log('📨 Mensagem de encerramento enviada para o dono via DM');
+    }
+  } catch (error) {
+    console.error('❌ Erro ao enviar DM de encerramento:', error);
+  }
+  process.exit(0);
+});
+
+// 🔹 ============================================
+// 🔹 READY (COM DM PARA O DONO)
 // 🔹 ============================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -1010,11 +981,18 @@ client.once('ready', async () => {
   console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
   console.log(`💾 Banco de dados: ${DB_FILE}`);
 
-  const channelNotificacoes = client.channels.cache.get(CHANNEL_NOTIFICACOES);
-  if (channelNotificacoes) {
-    await channelNotificacoes.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite !ranking\n🔎 Use /tem [jogo] - com sugestões automáticas!`);
+  // 🔹 Envia mensagem de inicialização APENAS para o dono via DM
+  try {
+    const dono = await client.users.fetch(DONO_ID);
+    if (dono) {
+      await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite !ranking\n🔎 Use /tem [jogo] - com sugestões automáticas!`);
+      console.log(`📨 Mensagem de inicialização enviada para o dono via DM`);
+    }
+  } catch (error) {
+    console.error('❌ Erro ao enviar DM para o dono:', error);
   }
 
+  // 🔹 Mensagem no canal de conquistas (mantido para informar os usuários)
   const channelConquistas = client.channels.cache.get(CHANNEL_CONQUISTAS);
   if (channelConquistas) {
     await channelConquistas.send(`🏆 **SISTEMA DE CONQUISTAS ATIVADO!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n📝 Salvando conquistas existentes...`);
