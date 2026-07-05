@@ -264,33 +264,65 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsCompletas
+// 🔹 FUNÇÃO: buscarDLCsCompletas (VERSÃO MELHORADA)
 // 🔹 ============================================
 async function buscarDLCsCompletas(appid) {
   try {
+    // 🔹 MÉTODO 1: API da Steam
     const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
     const response = await fetchWithTimeout(url, 5000);
     const data = await response.json();
     
-    if (!data[appid]?.success) {
-      console.log(`⚠️ Jogo ${appid} não encontrado`);
-      return [];
+    let dlcsIds = [];
+    let gameName = '';
+    
+    if (data[appid]?.success) {
+      const gameData = data[appid].data;
+      gameName = gameData.name || `Jogo ${appid}`;
+      
+      // 🔹 DLCs listadas diretamente
+      if (gameData.dlc && gameData.dlc.length > 0) {
+        dlcsIds.push(...gameData.dlc);
+      }
+      
+      // 🔹 Pacotes/bundles relacionados
+      if (gameData.packages && gameData.packages.length > 0) {
+        for (const pkg of gameData.packages) {
+          if (pkg && pkg.appid) {
+            dlcsIds.push(pkg.appid);
+          }
+        }
+      }
     }
     
-    const gameData = data[appid].data;
-    
-    const dlcsIds = [];
-    
-    if (gameData.dlc && gameData.dlc.length > 0) {
-      dlcsIds.push(...gameData.dlc);
+    // 🔹 MÉTODO 2: Scraping da página da loja para encontrar mais DLCs
+    try {
+      const storeUrl = `https://store.steampowered.com/app/${appid}`;
+      const storeResponse = await fetchWithTimeout(storeUrl, 5000);
+      const html = await storeResponse.text();
+      
+      // 🔹 Procura por links de DLCs na página
+      const dlcRegex = /store\.steampowered\.com\/app\/(\d+)\/["']/g;
+      let match;
+      while ((match = dlcRegex.exec(html)) !== null) {
+        const foundAppid = parseInt(match[1]);
+        if (foundAppid !== appid && !dlcsIds.includes(foundAppid)) {
+          dlcsIds.push(foundAppid);
+        }
+      }
+    } catch (error) {
+      console.log(`⚠️ Scraping da loja falhou:`, error.message);
     }
+    
+    // 🔹 Remove duplicatas
+    dlcsIds = [...new Set(dlcsIds)];
     
     if (dlcsIds.length === 0) {
-      console.log(`ℹ️ ${gameData.name} não possui conteúdos adicionais`);
+      console.log(`ℹ️ ${gameName || 'Jogo'} não possui conteúdos adicionais`);
       return [];
     }
     
-    console.log(`📦 ${gameData.name} possui ${dlcsIds.length} conteúdo(s) adicional(is)`);
+    console.log(`📦 ${gameName} possui ${dlcsIds.length} conteúdo(s) adicional(is)`);
     
     const dlcsCompletas = [];
     for (const dlcAppid of dlcsIds) {
@@ -301,13 +333,14 @@ async function buscarDLCsCompletas(appid) {
         
         if (dlcData[dlcAppid]?.success) {
           const dlcInfo = dlcData[dlcAppid].data;
-          if (dlcInfo.type === 'dlc' || dlcInfo.type === 'expansion' || dlcInfo.type === 'game') {
+          // 🔹 Filtra para não incluir o jogo principal novamente
+          if (dlcInfo.type && dlcInfo.type !== 'game') {
             dlcsCompletas.push({
               appid: dlcAppid,
               nome: dlcInfo.name || `Conteúdo ${dlcAppid}`,
               capa: dlcInfo.header_image || dlcInfo.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${dlcAppid}/header.jpg`
             });
-            console.log(`   ✅ Conteúdo: ${dlcInfo.name}`);
+            console.log(`   ✅ ${dlcInfo.name}`);
           }
         }
       } catch (error) {
@@ -451,7 +484,6 @@ async function buscarSugestoesJogos(termo) {
     const data = await response.json();
     
     if (data.items && data.items.length > 0) {
-      // 🔹 PRIORIDADE 1: Jogos que COMEÇAM com o termo
       const jogos = data.items
         .filter(item => {
           const nomeLower = item.name.toLowerCase();
@@ -464,7 +496,6 @@ async function buscarSugestoesJogos(termo) {
           value: item.name
         }));
       
-      // 🔹 Se não encontrou jogos que começam com o termo, busca os que contêm
       if (jogos.length === 0) {
         const jogosContem = data.items
           .filter(item => {
