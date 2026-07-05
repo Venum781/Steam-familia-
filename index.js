@@ -267,7 +267,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia (VIA PÁGINA DA LOJA)
+// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia (COM MÚLTIPLAS VARIAÇÕES)
 // 🔹 ============================================
 async function verificarCompatibilidadeFamilia(appid) {
   try {
@@ -277,26 +277,76 @@ async function verificarCompatibilidadeFamilia(appid) {
     const response = await fetchWithTimeout(storeUrl, 8000);
     const html = await response.text();
     
-    // 🔹 Procura por "Compartilhamento em família" ou "Family Sharing"
-    const temCompartilhamento = 
-      html.includes('Compartilhamento em família') || 
-      html.includes('Family Sharing');
+    // 🔹 Lista de palavras-chave que indicam COMPATIBILIDADE
+    const palavrasCompatibilidade = [
+      'Compartilhamento em família',
+      'Family Sharing',
+      'compartilhamento familiar',
+      'family sharing',
+      'Compartilhamento familiar',
+      'Family Share',
+      'family share'
+    ];
     
-    // 🔹 Verifica se está marcado como NÃO disponível
-    const naoDisponivel = 
-      html.includes('Compartilhamento em família não disponível') ||
-      html.includes('Family Sharing not available');
+    // 🔹 Lista de palavras-chave que indicam INCOMPATIBILIDADE
+    const palavrasIncompatibilidade = [
+      'Compartilhamento em família não disponível',
+      'Family Sharing not available',
+      'não é compatível com Compartilhamento em Família',
+      'not compatible with Family Sharing',
+      'não suporta Compartilhamento em Família',
+      'does not support Family Sharing'
+    ];
+    
+    // 🔹 Verifica compatibilidade
+    let temCompartilhamento = false;
+    for (const palavra of palavrasCompatibilidade) {
+      if (html.includes(palavra)) {
+        temCompartilhamento = true;
+        console.log(`   🔍 Encontrou: "${palavra}"`);
+        break;
+      }
+    }
+    
+    // 🔹 Verifica incompatibilidade
+    let temIncompatibilidade = false;
+    for (const palavra of palavrasIncompatibilidade) {
+      if (html.includes(palavra)) {
+        temIncompatibilidade = true;
+        console.log(`   ⚠️ Encontrou: "${palavra}"`);
+        break;
+      }
+    }
+    
+    console.log(`🔍 Resultado: temCompartilhamento=${temCompartilhamento}, temIncompatibilidade=${temIncompatibilidade}`);
     
     // 🔹 Se tiver a informação e não estiver marcado como não disponível, é compatível
-    if (temCompartilhamento && !naoDisponivel) {
+    if (temCompartilhamento && !temIncompatibilidade) {
       console.log(`✅ Jogo ${appid} é compatível com Família Steam`);
       return true;
-    } else if (naoDisponivel) {
+    } else if (temIncompatibilidade) {
       console.log(`❌ Jogo ${appid} NÃO é compatível com Família Steam`);
       return false;
     } else {
-      // 🔹 Se não tiver a informação, assume que NÃO é compatível
-      console.log(`⚠️ Jogo ${appid} não possui informação de compartilhamento - ASSUMINDO INCOMPATÍVEL`);
+      // 🔹 Se não encontrou a informação, verifica se tem indicações de que NÃO é compatível
+      const temRequisitoConta = 
+        html.includes('Requer conta de terceiros') ||
+        html.includes('Requires third-party account') ||
+        html.includes('Requer conta da') ||
+        html.includes('Requires account');
+      
+      const temDRMRestritivo = 
+        html.includes('Denuvo') ||
+        html.includes('SafeDisc') ||
+        html.includes('SecuROM');
+      
+      if (temRequisitoConta || temDRMRestritivo) {
+        console.log(`❌ Jogo ${appid} NÃO é compatível (requer conta ou DRM)`);
+        return false;
+      }
+      
+      // 🔹 Se não encontrou nada, assume que NÃO é compatível
+      console.log(`⚠️ Jogo ${appid} - ASSUMINDO INCOMPATÍVEL`);
       return false;
     }
     
@@ -365,7 +415,7 @@ async function verificarJogoFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: formatarRespostaJogo (ATUALIZADA)
+// 🔹 FUNÇÃO: formatarRespostaJogo
 // 🔹 ============================================
 function formatarRespostaJogo(jogo, donos, totalDLCs, compativel) {
   const embed = new EmbedBuilder()
