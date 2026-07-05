@@ -270,7 +270,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia (STEAMDB + STEAM FALLBACK)
+// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia (VIA STEAMDB + FALLBACK)
 // 🔹 ============================================
 async function verificarCompatibilidadeFamilia(appid) {
   // 🔹 Verifica cache primeiro
@@ -280,6 +280,7 @@ async function verificarCompatibilidadeFamilia(appid) {
   }
   
   let resultado = true;
+  let motivo = '';
   
   // 🔹 MÉTODO 1: SteamDB (mais confiável para elegibilidade)
   try {
@@ -297,25 +298,24 @@ async function verificarCompatibilidadeFamilia(appid) {
       
       console.log(`📊 SteamDB: exclude=${excludeFromFamilySharing}, isFree=${isFree}, requiresAccount=${requiresAccount}`);
       
-      if (excludeFromFamilySharing) {
-        resultado = false;
-        console.log(`❌ SteamDB: Jogo ${appid} NÃO compatível (editora marcou como inelegível)`);
-        compatibilidadeCache[appid] = resultado;
-        return resultado;
-      } else if (isFree) {
-        resultado = false;
-        console.log(`❌ SteamDB: Jogo ${appid} NÃO compatível (free-to-play)`);
-        compatibilidadeCache[appid] = resultado;
-        return resultado;
-      } else if (requiresAccount) {
-        resultado = false;
-        console.log(`❌ SteamDB: Jogo ${appid} NÃO compatível (requer conta de terceiros)`);
+      // 🔹 Se o jogo for elegível E não for free E não requerer conta, é compatível
+      if (excludeFromFamilySharing === false && !isFree && !requiresAccount) {
+        resultado = true;
+        console.log(`✅ SteamDB: Jogo ${appid} é compatível`);
         compatibilidadeCache[appid] = resultado;
         return resultado;
       } else {
-        console.log(`✅ SteamDB: Jogo ${appid} é compatível`);
-        compatibilidadeCache[appid] = true;
-        return true;
+        resultado = false;
+        if (excludeFromFamilySharing) {
+          motivo = 'A editora marcou este jogo como inelegível para compartilhamento.';
+        } else if (isFree) {
+          motivo = 'Jogos Free-to-Play não são elegíveis para compartilhamento.';
+        } else if (requiresAccount) {
+          motivo = 'Este jogo requer conta de terceiros (EA, Ubisoft, etc).';
+        }
+        console.log(`❌ SteamDB: Jogo ${appid} NÃO compatível: ${motivo}`);
+        compatibilidadeCache[appid] = resultado;
+        return resultado;
       }
     } else {
       console.log(`⚠️ SteamDB não retornou dados para ${appid}`);
@@ -353,6 +353,7 @@ async function verificarCompatibilidadeFamilia(appid) {
       console.log(`✅ Steam (fallback): Jogo ${appid} compatível`);
     } else if (naoDisponivel) {
       resultado = false;
+      motivo = 'A Steam indica que este jogo não está disponível para compartilhamento.';
       console.log(`❌ Steam (fallback): Jogo ${appid} NÃO compatível`);
     } else {
       resultado = true;
@@ -361,6 +362,11 @@ async function verificarCompatibilidadeFamilia(appid) {
   } catch (error) {
     console.log(`⚠️ Steam fallback falhou: ${error.message}`);
     resultado = true;
+  }
+  
+  // 🔹 Se não tiver motivo definido, define um genérico
+  if (!resultado && !motivo) {
+    motivo = 'Este jogo não é elegível para Compartilhamento em Família.';
   }
   
   compatibilidadeCache[appid] = resultado;
@@ -444,7 +450,7 @@ function formatarRespostaJogo(jogo, donos, totalDLCs, compativel) {
   if (!compativel) {
     embed.addFields({
       name: '⚠️ ATENÇÃO',
-      value: '⚠️ **Este jogo NÃO tem suporte para Compartilhamento em Família!**\n\nMotivo: A editora marcou este jogo como inelegível para compartilhamento.',
+      value: '⚠️ **Este jogo NÃO tem suporte para Compartilhamento em Família!**\n\nVerifique a página do jogo na Steam para mais informações.',
       inline: false
     });
   }
