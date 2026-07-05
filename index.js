@@ -277,39 +277,39 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarCapaDLC
+// 🔹 FUNÇÃO: buscarDLCsCompletas (CORRIGIDA)
 // 🔹 ============================================
-async function buscarCapaDLC(appid) {
+async function buscarDLCsCompletas(appid) {
   try {
-    const url = `https://store.steampowered.com/api/appdetails?appids=${appid}`;
-    const response = await fetchWithTimeout(url, 3000);
+    const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
+    const response = await fetchWithTimeout(url, 5000);
     const data = await response.json();
     
     if (data[appid]?.success) {
       const gameData = data[appid].data;
-      return {
-        nome: gameData.name,
-        capa: gameData.header_image || gameData.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`
-      };
-    }
-    return null;
-  } catch (error) {
-    console.error(`❌ Erro ao buscar capa da DLC ${appid}:`, error.message);
-    return null;
-  }
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsJogo
-// 🔹 ============================================
-async function buscarDLCsJogo(appid) {
-  try {
-    const url = `https://store.steampowered.com/api/appdetails?appids=${appid}`;
-    const response = await fetchWithTimeout(url, 5000);
-    const data = await response.json();
-    
-    if (data[appid]?.data?.dlc) {
-      return data[appid].data.dlc;
+      
+      if (gameData.dlc && gameData.dlc.length > 0) {
+        const dlcsCompletas = [];
+        for (const dlcAppid of gameData.dlc) {
+          try {
+            const dlcUrl = `https://store.steampowered.com/api/appdetails?appids=${dlcAppid}&l=portuguese`;
+            const dlcResponse = await fetchWithTimeout(dlcUrl, 3000);
+            const dlcData = await dlcResponse.json();
+            
+            if (dlcData[dlcAppid]?.success) {
+              const dlcInfo = dlcData[dlcAppid].data;
+              dlcsCompletas.push({
+                appid: dlcAppid,
+                nome: dlcInfo.name || `DLC ${dlcAppid}`,
+                capa: dlcInfo.header_image || dlcInfo.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${dlcAppid}/header.jpg`
+              });
+            }
+          } catch (error) {
+            console.error(`❌ Erro ao buscar DLC ${dlcAppid}:`, error.message);
+          }
+        }
+        return dlcsCompletas;
+      }
     }
     return [];
   } catch (error) {
@@ -319,15 +319,15 @@ async function buscarDLCsJogo(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogoFamilia
+// 🔹 FUNÇÃO: verificarJogoFamilia (CORRIGIDA)
 // 🔹 ============================================
 async function verificarJogoFamilia(appid) {
   const resultados = [];
   const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
   const apiKey = process.env.STEAM_KEY;
   
-  const dlcsDisponiveis = await buscarDLCsJogo(appid);
-  console.log(`📦 DLCs disponíveis: ${dlcsDisponiveis.length}`);
+  const todasDLCs = await buscarDLCsCompletas(appid);
+  console.log(`📦 DLCs disponíveis para este jogo: ${todasDLCs.length}`);
   
   for (const steamId of steamIds) {
     try {
@@ -343,14 +343,11 @@ async function verificarJogoFamilia(appid) {
           const discordId = discordUsers[steamId];
           
           const dlcsDoUsuario = [];
-          if (dlcsDisponiveis.length > 0) {
-            for (const dlcAppid of dlcsDisponiveis) {
-              const temDlc = data.response.games.some(g => g.appid === dlcAppid);
+          if (todasDLCs.length > 0) {
+            for (const dlc of todasDLCs) {
+              const temDlc = data.response.games.some(g => g.appid === dlc.appid);
               if (temDlc) {
-                const dlcInfo = await buscarCapaDLC(dlcAppid);
-                if (dlcInfo) {
-                  dlcsDoUsuario.push(dlcInfo);
-                }
+                dlcsDoUsuario.push(dlc);
               }
             }
           }
@@ -373,7 +370,7 @@ async function verificarJogoFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: formatarRespostaJogo
+// 🔹 FUNÇÃO: formatarRespostaJogo (ATUALIZADA)
 // 🔹 ============================================
 function formatarRespostaJogo(jogo, donos) {
   const embed = new EmbedBuilder()
@@ -396,12 +393,12 @@ function formatarRespostaJogo(jogo, donos) {
       
       if (dono.totalDlcs > 0) {
         descricao += `   📦 DLCs (${dono.totalDlcs}):\n`;
-        const dlcsMostrar = dono.dlcs.slice(0, 3);
+        const dlcsMostrar = dono.dlcs.slice(0, 5);
         dlcsMostrar.forEach(dlc => {
           descricao += `      • ${dlc.nome}\n`;
         });
-        if (dono.dlcs.length > 3) {
-          descricao += `      • + ${dono.dlcs.length - 3} DLC(s) mais\n`;
+        if (dono.dlcs.length > 5) {
+          descricao += `      • + ${dono.dlcs.length - 5} DLC(s) mais\n`;
         }
       } else {
         descricao += `   📦 Nenhuma DLC\n`;
@@ -421,6 +418,33 @@ function formatarRespostaJogo(jogo, donos) {
   }
   
   return embed;
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: registrarComandos (NOVA)
+// 🔹 ============================================
+async function registrarComandos() {
+  try {
+    const commands = [
+      {
+        name: 'tem',
+        description: 'Verifica se um jogo está na biblioteca da família',
+        options: [
+          {
+            name: 'jogo',
+            description: 'Nome do jogo ou link da Steam',
+            type: 3,
+            required: true
+          }
+        ]
+      }
+    ];
+
+    await client.application.commands.set(commands);
+    console.log('✅ Comando /tem registrado com sucesso!');
+  } catch (error) {
+    console.error('❌ Erro ao registrar comandos:', error);
+  }
 }
 
 // 🔹 ============================================
@@ -543,7 +567,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
               )
               .setTimestamp();
 
-            // 🔹 SEM @everyone nas conquistas
             await channelConquistas.send({
               content: `🎉 **NOVA CONQUISTA!**`,
               embeds: [embed]
@@ -737,38 +760,19 @@ async function checkSteamGames() {
 }
 
 // 🔹 ============================================
-// 🔹 COMANDOS
+// 🔹 EVENTO: /tem (SLASH COMMAND)
 // 🔹 ============================================
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
 
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  
-  // 🔹 Comando !ranking
-  if (message.content.toLowerCase() === '!ranking' || message.content.toLowerCase() === '!rank') {
-    await enviarRanking();
-  }
-  
-  // 🔹 Comando !tem (com suporte a nome OU link)
-  if (message.content.toLowerCase().startsWith('!tem ')) {
-    const input = message.content.slice(5).trim();
+  if (interaction.commandName === 'tem') {
+    const input = interaction.options.getString('jogo');
     
-    if (!input) {
-      await message.reply({
-        content: '❌ Use:\n`!tem [nome do jogo]`\n`!tem [link da Steam]`\nExemplo: `!tem Elden Ring` ou `!tem https://store.steampowered.com/app/1245620`',
-        ephemeral: true
-      });
-      return;
-    }
-    
-    const mensagem = await message.reply({
-      content: `🔍 Procurando...`,
-      ephemeral: true
-    });
+    await interaction.deferReply({ ephemeral: true });
     
     try {
       let jogo = null;
       
-      // 🔹 Verifica se é um link da Steam
       if (input.includes('store.steampowered.com/app/')) {
         const appid = extrairAppIdDaUrl(input);
         if (appid) {
@@ -779,15 +783,13 @@ client.on('messageCreate', async (message) => {
         }
       }
       
-      // 🔹 Se não for link ou não encontrou, busca por nome
       if (!jogo) {
         jogo = await buscarJogoSteam(input);
       }
       
       if (!jogo) {
-        await mensagem.edit({
-          content: `❌ Não encontrei o jogo **${input}** na Steam.\n💡 Verifique o nome ou link e tente novamente.`,
-          ephemeral: true
+        await interaction.editReply({
+          content: `❌ Não encontrei o jogo **${input}** na Steam.\n💡 Verifique o nome ou link e tente novamente.`
         });
         return;
       }
@@ -795,19 +797,28 @@ client.on('messageCreate', async (message) => {
       const donos = await verificarJogoFamilia(jogo.appid);
       const embed = formatarRespostaJogo(jogo, donos);
       
-      await mensagem.edit({
-        content: null,
-        embeds: [embed],
-        ephemeral: true
+      await interaction.editReply({
+        embeds: [embed]
       });
       
     } catch (error) {
-      console.error('❌ Erro no comando !tem:', error);
-      await mensagem.edit({
-        content: `❌ Ocorreu um erro ao buscar o jogo. Tente novamente mais tarde.`,
-        ephemeral: true
+      console.error('❌ Erro no comando /tem:', error);
+      await interaction.editReply({
+        content: `❌ Ocorreu um erro ao buscar o jogo. Tente novamente mais tarde.`
       });
     }
+  }
+});
+
+// 🔹 ============================================
+// 🔹 COMANDOS NO CHAT (MENSAGENS NORMAIS)
+// 🔹 ============================================
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  
+  // 🔹 Comando !ranking
+  if (message.content.toLowerCase() === '!ranking' || message.content.toLowerCase() === '!rank') {
+    await enviarRanking();
   }
   
   // 🔹 Comando !resetRanking (apenas dono)
@@ -854,7 +865,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // 🔹 ============================================
-// 🔹 READY
+// 🔹 REGISTRAR COMANDOS SLASH E READY
 // 🔹 ============================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -863,9 +874,12 @@ client.once('ready', async () => {
   console.log(`📝 Máximo de jogos por usuário: ${MAX_JOGOS_POR_USUARIO}`);
   console.log(`💾 Banco de dados: ${DB_FILE}`);
 
+  // 🔹 Registrar comandos slash
+  await registrarComandos();
+
   const channelNotificacoes = client.channels.cache.get(CHANNEL_NOTIFICACOES);
   if (channelNotificacoes) {
-    await channelNotificacoes.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite !ranking`);
+    await channelNotificacoes.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite !ranking\n🔎 Use /tem [jogo] para consultar a biblioteca`);
   }
 
   const channelConquistas = client.channels.cache.get(CHANNEL_CONQUISTAS);
