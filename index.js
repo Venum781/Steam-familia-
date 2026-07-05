@@ -5,7 +5,7 @@ const path = require('path');
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 
 // 🔹 CONFIGURAÇÕES OTIMIZADAS
-const INTERVALO_VERIFICACAO = 15 * 1000; // 15 segundos
+const INTERVALO_VERIFICACAO = 15 * 1000;
 const MAX_JOGOS_POR_USUARIO = 8;
 const MAX_CONQUISTAS_POR_JOGO = 30;
 
@@ -22,7 +22,6 @@ const CHANNEL_NOTIFICACOES = process.env.CHANNEL_ID;
 const CHANNEL_RANKING = "1523067407474757672";
 const CHANNEL_CONQUISTAS = "1523080625802711150";
 
-// 🔹 Arquivo do banco de dados
 const DB_FILE = path.join(__dirname, 'steam_achievements_db.json');
 
 // 🔹 Mapeamento de usuários
@@ -43,7 +42,7 @@ const discordUsers = {
 };
 
 // 🔹 ============================================
-// 🔹 BANCO DE DADOS (COM RANKING PERSISTENTE)
+// 🔹 BANCO DE DADOS
 // 🔹 ============================================
 
 function carregarDB() {
@@ -71,14 +70,13 @@ function salvarDB(db) {
   }
 }
 
-// 🔹 Inicializar banco de dados
 let db = carregarDB();
 if (!db.conquistas) db.conquistas = {};
 if (!db.jogosRecentes) db.jogosRecentes = {};
 if (!db.ranking) db.ranking = {};
 
 // 🔹 ============================================
-// 🔹 RANKING (COM PERSISTÊNCIA)
+// 🔹 RANKING
 // 🔹 ============================================
 
 const rankingPadrao = {
@@ -95,7 +93,6 @@ function carregarRanking() {
   if (db.ranking && Object.keys(db.ranking).length > 0) {
     console.log('📊 Carregando ranking do banco de dados...');
     ranking = db.ranking;
-    
     for (const [steamId, dados] of Object.entries(rankingPadrao)) {
       if (!ranking[steamId]) {
         ranking[steamId] = dados;
@@ -112,7 +109,6 @@ function carregarRanking() {
 
 carregarRanking();
 
-// 🔹 Estruturas de dados
 let previousGames = {};
 let ultimaMensagemRankingId = null;
 let primeiraVerificacaoConcluida = false;
@@ -210,9 +206,6 @@ async function getCurrentGame(steamId) {
   return null;
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: extrairAppIdDaUrl
-// 🔹 ============================================
 function extrairAppIdDaUrl(url) {
   try {
     const match = url.match(/store\.steampowered\.com\/app\/(\d+)/);
@@ -226,9 +219,6 @@ function extrairAppIdDaUrl(url) {
   }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: buscarJogoPorAppId
-// 🔹 ============================================
 async function buscarJogoPorAppId(appid) {
   try {
     const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
@@ -251,9 +241,6 @@ async function buscarJogoPorAppId(appid) {
   }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: buscarJogoSteam
-// 🔹 ============================================
 async function buscarJogoSteam(nomeJogo) {
   try {
     const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(nomeJogo)}&l=portuguese&cc=BR`;
@@ -277,7 +264,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsCompletas
+// 🔹 FUNÇÃO: buscarDLCsCompletas (CORRIGIDA)
 // 🔹 ============================================
 async function buscarDLCsCompletas(appid) {
   try {
@@ -292,15 +279,30 @@ async function buscarDLCsCompletas(appid) {
     
     const gameData = data[appid].data;
     
-    if (!gameData.dlc || gameData.dlc.length === 0) {
-      console.log(`ℹ️ ${gameData.name} não possui DLCs`);
+    // 🔹 Busca TODOS os conteúdos adicionais (DLCs, expansões, etc)
+    // Isso inclui tanto a lista 'dlc' quanto 'fullgame' para identificar conteúdos adicionais
+    const dlcsIds = [];
+    
+    // Verifica se tem DLCs listadas
+    if (gameData.dlc && gameData.dlc.length > 0) {
+      dlcsIds.push(...gameData.dlc);
+    }
+    
+    // Também verifica se é uma DLC de outro jogo (fullgame)
+    if (gameData.fullgame) {
+      // Se tem fullgame, significa que é uma DLC/expansão
+      // Não adicionamos pois queremos as DLCs do jogo principal
+    }
+    
+    if (dlcsIds.length === 0) {
+      console.log(`ℹ️ ${gameData.name} não possui conteúdos adicionais`);
       return [];
     }
     
-    console.log(`📦 ${gameData.name} possui ${gameData.dlc.length} DLC(s)`);
+    console.log(`📦 ${gameData.name} possui ${dlcsIds.length} conteúdo(s) adicional(is)`);
     
     const dlcsCompletas = [];
-    for (const dlcAppid of gameData.dlc) {
+    for (const dlcAppid of dlcsIds) {
       try {
         const dlcUrl = `https://store.steampowered.com/api/appdetails?appids=${dlcAppid}&l=portuguese`;
         const dlcResponse = await fetchWithTimeout(dlcUrl, 3000);
@@ -308,27 +310,31 @@ async function buscarDLCsCompletas(appid) {
         
         if (dlcData[dlcAppid]?.success) {
           const dlcInfo = dlcData[dlcAppid].data;
-          dlcsCompletas.push({
-            appid: dlcAppid,
-            nome: dlcInfo.name || `DLC ${dlcAppid}`,
-            capa: dlcInfo.header_image || dlcInfo.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${dlcAppid}/header.jpg`
-          });
-          console.log(`   ✅ DLC: ${dlcInfo.name}`);
+          // 🔹 Verifica se é realmente uma DLC/conteúdo adicional
+          // Alguns jogos listam pacotes como DLCs, então filtramos
+          if (dlcInfo.type === 'dlc' || dlcInfo.type === 'expansion' || dlcInfo.type === 'game') {
+            dlcsCompletas.push({
+              appid: dlcAppid,
+              nome: dlcInfo.name || `Conteúdo ${dlcAppid}`,
+              capa: dlcInfo.header_image || dlcInfo.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${dlcAppid}/header.jpg`
+            });
+            console.log(`   ✅ Conteúdo: ${dlcInfo.name}`);
+          }
         }
       } catch (error) {
-        console.error(`   ❌ Erro na DLC ${dlcAppid}:`, error.message);
+        console.error(`   ❌ Erro no conteúdo ${dlcAppid}:`, error.message);
       }
     }
     
     return dlcsCompletas;
   } catch (error) {
-    console.error(`❌ Erro ao buscar DLCs:`, error.message);
+    console.error(`❌ Erro ao buscar conteúdos adicionais:`, error.message);
     return [];
   }
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogoFamilia
+// 🔹 FUNÇÃO: verificarJogoFamilia (CORRIGIDA)
 // 🔹 ============================================
 async function verificarJogoFamilia(appid) {
   const resultados = [];
@@ -336,7 +342,7 @@ async function verificarJogoFamilia(appid) {
   const apiKey = process.env.STEAM_KEY;
   
   const todasDLCs = await buscarDLCsCompletas(appid);
-  console.log(`📦 Total de DLCs: ${todasDLCs.length}`);
+  console.log(`📦 Total de conteúdos adicionais: ${todasDLCs.length}`);
   
   for (const steamId of steamIds) {
     try {
@@ -380,7 +386,7 @@ async function verificarJogoFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: formatarRespostaJogo
+// 🔹 FUNÇÃO: formatarRespostaJogo (ATUALIZADA)
 // 🔹 ============================================
 function formatarRespostaJogo(jogo, donos) {
   const embed = new EmbedBuilder()
@@ -402,16 +408,16 @@ function formatarRespostaJogo(jogo, donos) {
       descricao += `**${index + 1}. ${mencao}**\n`;
       
       if (dono.totalDlcs > 0) {
-        descricao += `   📦 DLCs (${dono.totalDlcs}):\n`;
+        descricao += `   📦 Conteúdos Adicionais (${dono.totalDlcs}):\n`;
         const dlcsMostrar = dono.dlcs.slice(0, 5);
         dlcsMostrar.forEach(dlc => {
           descricao += `      • ${dlc.nome}\n`;
         });
         if (dono.dlcs.length > 5) {
-          descricao += `      • + ${dono.dlcs.length - 5} DLC(s) mais\n`;
+          descricao += `      • + ${dono.dlcs.length - 5} mais\n`;
         }
       } else {
-        descricao += `   📦 Nenhuma DLC\n`;
+        descricao += `   📦 Nenhum conteúdo adicional\n`;
       }
       descricao += `\n`;
     });
@@ -431,7 +437,7 @@ function formatarRespostaJogo(jogo, donos) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarSugestoesJogos (NOVA)
+// 🔹 FUNÇÃO: buscarSugestoesJogos (CORRIGIDA)
 // 🔹 ============================================
 async function buscarSugestoesJogos(termo) {
   try {
@@ -639,9 +645,6 @@ function gerarRanking() {
   return embed;
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: enviarRanking (COM SALVAMENTO)
-// 🔹 ============================================
 async function enviarRanking() {
   db.ranking = ranking;
   salvarDB(db);
@@ -664,9 +667,6 @@ async function enviarRanking() {
   }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarSuporteFamilia
-// 🔹 ============================================
 async function verificarSuporteFamilia(appid) {
   try {
     const url = `https://store.steampowered.com/app/${appid}`;
@@ -684,9 +684,6 @@ async function verificarSuporteFamilia(appid) {
   }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: checkSteamGames (PRINCIPAL)
-// 🔹 ============================================
 async function checkSteamGames() {
   const inicio = Date.now();
   console.log(`🔄 [${new Date().toLocaleTimeString()}] VERIFICANDO...`);
@@ -781,7 +778,7 @@ async function checkSteamGames() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: registrarComandos (COM AUTOCOMPLETE)
+// 🔹 FUNÇÃO: registrarComandos (REGISTRO GLOBAL)
 // 🔹 ============================================
 async function registrarComandos() {
   try {
@@ -801,13 +798,15 @@ async function registrarComandos() {
       }
     ];
 
+    // 🔹 REGISTRA GLOBALMENTE (demora até 1 hora)
+    await client.application.commands.set(commands);
+    console.log('✅ /tem registrado GLOBALMENTE! (pode levar até 1 hora para aparecer)');
+    
+    // 🔹 TAMBÉM registra no servidor atual (mais rápido)
     const guild = client.guilds.cache.first();
     if (guild) {
       await guild.commands.set(commands);
-      console.log(`✅ /tem registrado no servidor: ${guild.name}`);
-    } else {
-      await client.application.commands.set(commands);
-      console.log('✅ /tem registrado globalmente');
+      console.log(`✅ /tem registrado no servidor: ${guild.name} (imediato)`);
     }
   } catch (error) {
     console.error('❌ Erro ao registrar /tem:', error);
@@ -815,7 +814,7 @@ async function registrarComandos() {
 }
 
 // 🔹 ============================================
-// 🔹 EVENTO: INTERACTION CREATE (COM AUTOCOMPLETE)
+// 🔹 EVENTO: INTERACTION CREATE
 // 🔹 ============================================
 client.on('interactionCreate', async (interaction) => {
   // 🔹 AUTOCOMPLETE
@@ -826,6 +825,7 @@ client.on('interactionCreate', async (interaction) => {
       try {
         const sugestoes = await buscarSugestoesJogos(valorDigitado);
         await interaction.respond(sugestoes);
+        console.log(`🔍 Sugestões para "${valorDigitado}": ${sugestoes.length}`);
       } catch (error) {
         console.error('❌ Erro no autocomplete:', error);
         await interaction.respond([]);
