@@ -302,13 +302,11 @@ async function verificarConquistas(steamId, games, mention, userName) {
               )
               .setTimestamp();
 
+            // 🔹 CORRIGIDO: SEM @everyone nas conquistas
             await channelConquistas.send({
-              content: `@everyone 🎉 **NOVA CONQUISTA!**`,
+              content: `🎉 **NOVA CONQUISTA!**`,
               embeds: [embed]
             });
-
-            // 🔹 REMOVIDO: Conquistas NÃO afetam mais o ranking
-            // if (ranking[steamId]) ranking[steamId].jogos += 0.1;
           }
 
           db.conquistas[steamId][appid] = {
@@ -346,7 +344,6 @@ function gerarRanking() {
   rankingArray.forEach((user, index) => {
     const posicao = index < 3 ? medalhas[index] : `${medalhas[index]}`;
     const mencao = user.discordId ? `<@${user.discordId}>` : user.nome;
-    // 🔹 CORRIGIDO: Mostra apenas números inteiros
     const totalJogos = user.jogos > 0 ? `${Math.floor(user.jogos)} jogos` : '0 jogos';
     description += `${posicao} **${mencao}** — ${totalJogos}\n`;
   });
