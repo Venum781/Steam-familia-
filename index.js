@@ -277,7 +277,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsCompletas (CORRIGIDA)
+// 🔹 FUNÇÃO: buscarDLCsCompletas
 // 🔹 ============================================
 async function buscarDLCsCompletas(appid) {
   try {
@@ -319,7 +319,7 @@ async function buscarDLCsCompletas(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogoFamilia (CORRIGIDA)
+// 🔹 FUNÇÃO: verificarJogoFamilia
 // 🔹 ============================================
 async function verificarJogoFamilia(appid) {
   const resultados = [];
@@ -370,7 +370,7 @@ async function verificarJogoFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: formatarRespostaJogo (ATUALIZADA)
+// 🔹 FUNÇÃO: formatarRespostaJogo
 // 🔹 ============================================
 function formatarRespostaJogo(jogo, donos) {
   const embed = new EmbedBuilder()
@@ -418,33 +418,6 @@ function formatarRespostaJogo(jogo, donos) {
   }
   
   return embed;
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: registrarComandos (NOVA)
-// 🔹 ============================================
-async function registrarComandos() {
-  try {
-    const commands = [
-      {
-        name: 'tem',
-        description: 'Verifica se um jogo está na biblioteca da família',
-        options: [
-          {
-            name: 'jogo',
-            description: 'Nome do jogo ou link da Steam',
-            type: 3,
-            required: true
-          }
-        ]
-      }
-    ];
-
-    await client.application.commands.set(commands);
-    console.log('✅ Comando /tem registrado com sucesso!');
-  } catch (error) {
-    console.error('❌ Erro ao registrar comandos:', error);
-  }
 }
 
 // 🔹 ============================================
@@ -811,6 +784,41 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // 🔹 ============================================
+// 🔹 FUNÇÃO: registrarComandos (NOVA)
+// 🔹 ============================================
+async function registrarComandos() {
+  try {
+    const commands = [
+      {
+        name: 'tem',
+        description: 'Verifica se um jogo está na biblioteca da família',
+        options: [
+          {
+            name: 'jogo',
+            description: 'Nome do jogo ou link da Steam',
+            type: 3,
+            required: true
+          }
+        ]
+      }
+    ];
+
+    // 🔹 Registra no servidor atual (mais rápido)
+    const guild = client.guilds.cache.first();
+    if (guild) {
+      await guild.commands.set(commands);
+      console.log(`✅ Comando /tem registrado no servidor: ${guild.name}`);
+    } else {
+      // 🔹 Fallback: registro global
+      await client.application.commands.set(commands);
+      console.log('✅ Comando /tem registrado globalmente!');
+    }
+  } catch (error) {
+    console.error('❌ Erro ao registrar comandos:', error);
+  }
+}
+
+// 🔹 ============================================
 // 🔹 COMANDOS NO CHAT (MENSAGENS NORMAIS)
 // 🔹 ============================================
 client.on('messageCreate', async (message) => {
@@ -865,17 +873,22 @@ client.on('messageCreate', async (message) => {
 });
 
 // 🔹 ============================================
-// 🔹 REGISTRAR COMANDOS SLASH E READY
+// 🔹 READY (COM REGISTRO FORÇADO DO COMANDO)
 // 🔹 ============================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   console.log(`📡 Conectado em ${client.guilds.cache.size} servidor(es)`);
-  console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
-  console.log(`📝 Máximo de jogos por usuário: ${MAX_JOGOS_POR_USUARIO}`);
-  console.log(`💾 Banco de dados: ${DB_FILE}`);
 
-  // 🔹 Registrar comandos slash
+  // 🔹 ============================================
+  // 🔹 REGISTRA O COMANDO /tem FORÇADAMENTE
+  // 🔹 ============================================
   await registrarComandos();
+
+  // 🔹 ============================================
+  // 🔹 RESTO DO CÓDIGO NORMAL
+  // 🔹 ============================================
+  console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
+  console.log(`💾 Banco de dados: ${DB_FILE}`);
 
   const channelNotificacoes = client.channels.cache.get(CHANNEL_NOTIFICACOES);
   if (channelNotificacoes) {
