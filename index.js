@@ -121,7 +121,7 @@ if (!db.jogosRecentes) db.jogosRecentes = {};
 if (!db.ranking) db.ranking = {};
 
 // 🔹 ============================================
-// 🔹 RANKING
+// 🔹 RANKING (COM PERSISTÊNCIA CORRIGIDA)
 // 🔹 ============================================
 
 const rankingPadrao = {
@@ -135,21 +135,32 @@ const rankingPadrao = {
 let ranking = {};
 
 function carregarRanking() {
+  // 🔹 Se o banco de dados tem ranking salvo, USA ELE
   if (db.ranking && Object.keys(db.ranking).length > 0) {
     console.log('📊 Carregando ranking do banco de dados...');
     ranking = db.ranking;
+    
+    // 🔹 Adiciona novos usuários se faltar (mas NÃO sobrescreve os existentes)
     for (const [steamId, dados] of Object.entries(rankingPadrao)) {
       if (!ranking[steamId]) {
         ranking[steamId] = dados;
         console.log(`📊 Adicionando novo usuário ao ranking: ${dados.nome}`);
       }
     }
-  } else {
-    console.log('📊 Nenhum ranking salvo encontrado. Usando valores padrão...');
-    ranking = JSON.parse(JSON.stringify(rankingPadrao));
+    
+    // 🔹 Salva o ranking atualizado no banco de dados
     db.ranking = ranking;
     salvarDB(db);
+    
+    console.log(`📊 Ranking carregado do banco de dados: ${Object.keys(ranking).length} usuários`);
+    return;
   }
+  
+  // 🔹 Se NÃO tiver ranking salvo, usa os valores padrão
+  console.log('📊 Nenhum ranking salvo encontrado. Usando valores padrão...');
+  ranking = JSON.parse(JSON.stringify(rankingPadrao));
+  db.ranking = ranking;
+  salvarDB(db);
 }
 
 carregarRanking();
