@@ -543,7 +543,7 @@ async function buscarSugestoesJogos(termo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarConquistas (ATUALIZADA COM PROGRESSO)
+// 🔹 FUNÇÃO: verificarConquistas (COM IMAGEM DA CONQUISTA)
 // 🔹 ============================================
 async function verificarConquistas(steamId, games, mention, userName) {
   if (!games?.length) return;
@@ -661,6 +661,12 @@ async function verificarConquistas(steamId, games, mention, userName) {
 
           for (const conquista of novas.slice(0, MAX_CONQUISTAS_POR_JOGO)) {
             const nomeConquista = await getAchievementName(steamId, appid, conquista.apiname);
+            
+            // 🔹 CONSTRÓI A URL DA IMAGEM DA CONQUISTA
+            const iconUrl = conquista.icon ? 
+              `https://shared.fastly.steamstatic.com/community_assets/images/apps/${appid}/${conquista.icon}.jpg` :
+              null;
+
             const embed = new EmbedBuilder()
               .setColor(0xFFD700)
               .setTitle(`🏆 ${userName} desbloqueou uma conquista!`)
@@ -674,6 +680,11 @@ async function verificarConquistas(steamId, games, mention, userName) {
               )
               .setFooter({ text: `+${novas.length} nova(s) conquista(s)` })
               .setTimestamp();
+
+            // 🔹 ADICIONA A IMAGEM DA CONQUISTA NO EMBED
+            if (iconUrl) {
+              embed.setImage(iconUrl);
+            }
 
             await channelConquistas.send({
               content: `🎉 **NOVA CONQUISTA!**`,
@@ -844,7 +855,6 @@ async function checkSteamGames() {
       console.log('🔍 Monitorando NOVAS conquistas em tempo real!');
       salvarDB(db);
       
-      // 🔹 REMOVIDO: Mensagem no canal de conquistas
       console.log('✅ SISTEMA INICIALIZADO! Conquistas salvas. Monitorando novas conquistas!');
     }
 
@@ -1039,7 +1049,7 @@ process.on('SIGTERM', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 READY (COM DM PARA O DONO E SEM SPAM NO CANAL)
+// 🔹 READY
 // 🔹 ============================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -1050,7 +1060,6 @@ client.once('ready', async () => {
   console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
   console.log(`💾 Banco de dados: ${DB_FILE}`);
 
-  // 🔹 Envia mensagem de inicialização APENAS para o dono via DM
   try {
     const dono = await client.users.fetch(DONO_ID);
     if (dono) {
@@ -1061,7 +1070,6 @@ client.once('ready', async () => {
     console.error('❌ Erro ao enviar DM para o dono:', error);
   }
 
-  // 🔹 REMOVIDO: Mensagem no canal de conquistas
   console.log(`🏆 SISTEMA DE CONQUISTAS ATIVADO! Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos`);
 
   console.log('🎮 Iniciando verificação inicial...');
