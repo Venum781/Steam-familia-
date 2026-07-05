@@ -234,9 +234,6 @@ async function getAchievements(steamId, appid) {
   return [];
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: buscarIconeConquista (NOVA)
-// 🔹 ============================================
 async function buscarIconeConquista(appid, apiname) {
   try {
     const url = `https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key=${process.env.STEAM_KEY}&appid=${appid}&l=portuguese`;
@@ -565,7 +562,7 @@ async function buscarSugestoesJogos(termo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarConquistas (COM IMAGEM DA CONQUISTA)
+// 🔹 FUNÇÃO: verificarConquistas (SEM RANKING)
 // 🔹 ============================================
 async function verificarConquistas(steamId, games, mention, userName) {
   if (!games?.length) return;
@@ -684,7 +681,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
           for (const conquista of novas.slice(0, MAX_CONQUISTAS_POR_JOGO)) {
             const nomeConquista = await getAchievementName(steamId, appid, conquista.apiname);
             
-            // 🔹 Busca o ícone da conquista via Schema
             const iconName = await buscarIconeConquista(appid, conquista.apiname);
             const iconUrl = iconName ? 
               `https://shared.fastly.steamstatic.com/community_assets/images/apps/${appid}/${iconName}.jpg` :
@@ -704,7 +700,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
               .setFooter({ text: `+${novas.length} nova(s) conquista(s)` })
               .setTimestamp();
 
-            // 🔹 Adiciona a imagem da conquista se disponível
             if (iconUrl) {
               embed.setImage(iconUrl);
             }
@@ -715,12 +710,12 @@ async function verificarConquistas(steamId, games, mention, userName) {
             });
           }
 
+          // 🔹 SALVA APENAS AS CONQUISTAS (NÃO ATUALIZA O RANKING)
           db.conquistas[steamId][appid] = {
             total: total,
             nomes: desbloqueadas.map(c => c.apiname),
             totalJogo: totalJogo
           };
-          await enviarRanking();
           salvarDB(db);
         }
       }
