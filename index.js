@@ -188,6 +188,8 @@ async function verificarConquistas(steamId, games, mention, userName) {
   // 🔹 DETECÇÃO RÁPIDA DE JOGOS RECENTES
   const jogosRecentes = [];
   const agora = Math.floor(Date.now() / 1000);
+  const ultimas24h = agora - (24 * 60 * 60);
+  const ultimas72h = agora - (72 * 60 * 60);
 
   // 1. Jogo atual (prioridade máxima)
   const jogoAtual = await getCurrentGame(steamId);
@@ -218,6 +220,18 @@ async function verificarConquistas(steamId, games, mention, userName) {
       const jogo = games.find(g => g.appid === appid);
       if (jogo && !jogosRecentes.find(g => g.appid === appid)) {
         jogosRecentes.push(jogo);
+      }
+    }
+  }
+
+  // 🔹 SE NÃO TIVER JOGOS RECENTES, PEGA OS PRIMEIROS DA BIBLIOTECA
+  if (jogosRecentes.length === 0) {
+    console.log(`📚 ${userName}: Nenhum jogo recente, pegando os 3 primeiros da biblioteca...`);
+    const primeirosJogos = games.slice(0, 3);
+    for (const jogo of primeirosJogos) {
+      if (!jogosRecentes.find(g => g.appid === jogo.appid)) {
+        jogosRecentes.push(jogo);
+        console.log(`📚 ${userName}: ${jogo.name}`);
       }
     }
   }
@@ -293,7 +307,8 @@ async function verificarConquistas(steamId, games, mention, userName) {
               embeds: [embed]
             });
 
-            if (ranking[steamId]) ranking[steamId].jogos += 0.1;
+            // 🔹 REMOVIDO: Conquistas NÃO afetam mais o ranking
+            // if (ranking[steamId]) ranking[steamId].jogos += 0.1;
           }
 
           db.conquistas[steamId][appid] = {
@@ -331,7 +346,9 @@ function gerarRanking() {
   rankingArray.forEach((user, index) => {
     const posicao = index < 3 ? medalhas[index] : `${medalhas[index]}`;
     const mencao = user.discordId ? `<@${user.discordId}>` : user.nome;
-    description += `${posicao} **${mencao}** — ${user.jogos} jogos\n`;
+    // 🔹 CORRIGIDO: Mostra apenas números inteiros
+    const totalJogos = user.jogos > 0 ? `${Math.floor(user.jogos)} jogos` : '0 jogos';
+    description += `${posicao} **${mencao}** — ${totalJogos}\n`;
   });
 
   embed.setDescription(description);
