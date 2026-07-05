@@ -30,6 +30,46 @@ const DB_FILE = path.join(__dirname, 'steam_achievements_db.json');
 // 🔹 Cache de compatibilidade
 const compatibilidadeCache = {};
 
+// 🔹 ============================================
+// 🔹 LISTA DE JOGOS NÃO COMPATÍVEIS COM FAMÍLIA STEAM
+// 🔹 ============================================
+// (Baseado na lista fornecida pelo usuário)
+const JOGOS_INCOMPATIVEIS = {
+  33930: "Arma 2: Operation Arrowhead",
+  107410: "Arma 3",
+  582660: "Black Desert",
+  1097150: "Fall Guys",
+  220240: "Far Cry 3",
+  298110: "Far Cry 4",
+  552520: "Far Cry 5",
+  304390: "FOR HONOR",
+  1546970: "Grand Theft Auto III – The Definitive Edition",
+  12210: "Grand Theft Auto IV: The Complete Edition",
+  3240220: "Grand Theft Auto V Enhanced",
+  271590: "Grand Theft Auto V Legacy",
+  1547000: "Grand Theft Auto: San Andreas – The Definitive Edition",
+  1546990: "Grand Theft Auto: Vice City – The Definitive Edition",
+  439700: "H1Z1: King of the Kill Test Server",
+  269210: "Hero Siege",
+  1426210: "It Takes Two",
+  510190: "Lazarus",
+  1392860: "Little Nightmares III",
+  1328670: "Mass Effect Legendary Edition",
+  204100: "Max Payne 3",
+  555160: "Pavlov VR",
+  2129530: "REANIMAL",
+  1174180: "Red Dead Redemption 2",
+  2215260: "Scott Pilgrim vs. The World: The Game – Complete Edition",
+  488790: "South Park: The Fractured But Whole",
+  2001120: "Split Fiction",
+  1172380: "STAR WARS Jedi: Fallen Order",
+  1774580: "STAR WARS Jedi: Survivor",
+  1527280: "Starship Tunnel",
+  470220: "UNO",
+  447040: "Watch Dogs 2",
+  1222700: "A Way Out"
+};
+
 // 🔹 Mapeamento de usuários
 const steamNames = {
   "76561198127320557": "Gardemi",
@@ -270,66 +310,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarCompatibilidadeSteamShare (PRIORITÁRIA)
-// 🔹 ============================================
-async function verificarCompatibilidadeSteamShare(appid) {
-  try {
-    const url = `https://steamshare.site/app/${appid}`;
-    console.log(`🌐 Verificando via steamshare.site: ${url}`);
-    
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Connection': 'keep-alive'
-      }
-    });
-    
-    if (!response.ok) {
-      console.log(`⚠️ steamshare.site retornou status ${response.status}`);
-      return null;
-    }
-    
-    const html = await response.text();
-    
-    // 🔹 Procura por indicadores de compatibilidade no HTML
-    const isNotShareable = 
-      html.includes('Not Shareable') || 
-      html.includes('not shareable') ||
-      html.includes('Not eligible for Family Sharing') ||
-      html.includes('não pode ser compartilhado') ||
-      html.includes('Ineligible') ||
-      html.includes('ineligible');
-    
-    const isShareable = 
-      html.includes('Shareable') || 
-      html.includes('shareable') ||
-      html.includes('Eligible for Family Sharing') ||
-      html.includes('pode ser compartilhado') ||
-      html.includes('Eligible');
-    
-    console.log(`🔍 Resultado steamshare.site: isNotShareable=${isNotShareable}, isShareable=${isShareable}`);
-    
-    if (isNotShareable) {
-      console.log(`❌ steamshare.site: Jogo ${appid} NÃO é compatível`);
-      return false;
-    } else if (isShareable) {
-      console.log(`✅ steamshare.site: Jogo ${appid} é compatível`);
-      return true;
-    }
-    
-    console.log(`⚠️ steamshare.site: Não foi possível determinar para ${appid}`);
-    return null;
-    
-  } catch (error) {
-    console.error(`❌ Erro ao verificar steamshare.site:`, error.message);
-    return null;
-  }
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia (STEAMSHARE + STEAMDB + STEAM)
+// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia
 // 🔹 ============================================
 async function verificarCompatibilidadeFamilia(appid) {
   // 🔹 Verifica cache primeiro
@@ -338,25 +319,18 @@ async function verificarCompatibilidadeFamilia(appid) {
     return compatibilidadeCache[appid];
   }
   
-  let resultado = true;
-  let motivo = '';
-  
-  // 🔹 MÉTODO 1: steamshare.site (mais específico para compatibilidade)
-  try {
-    const resultadoSteamShare = await verificarCompatibilidadeSteamShare(appid);
-    if (resultadoSteamShare !== null) {
-      compatibilidadeCache[appid] = resultadoSteamShare;
-      return resultadoSteamShare;
-    }
-  } catch (error) {
-    console.log(`⚠️ steamshare.site falhou: ${error.message}`);
+  // 🔹 VERIFICA LISTA MANUAL PRIMEIRO
+  if (JOGOS_INCOMPATIVEIS[appid]) {
+    console.log(`📋 Lista manual: Jogo ${appid} (${JOGOS_INCOMPATIVEIS[appid]}) NÃO é compatível`);
+    compatibilidadeCache[appid] = false;
+    return false;
   }
   
-  // 🔹 MÉTODO 2: SteamDB
+  let resultado = true;
+  
+  // 🔹 SteamDB (fallback)
   try {
     const url = `https://steamdb.info/api/v1/appdetails/?appid=${appid}`;
-    console.log(`🌐 Verificando via SteamDB (fallback): ${url}`);
-    
     const response = await fetchWithTimeout(url, 5000);
     const data = await response.json();
     
@@ -366,23 +340,9 @@ async function verificarCompatibilidadeFamilia(appid) {
       const isFree = appData.is_free || false;
       const requiresAccount = appData.requires_account || false;
       
-      console.log(`📊 SteamDB: exclude=${excludeFromFamilySharing}, isFree=${isFree}, requiresAccount=${requiresAccount}`);
-      
-      if (excludeFromFamilySharing === false && !isFree && !requiresAccount) {
-        resultado = true;
-        console.log(`✅ SteamDB: Jogo ${appid} é compatível`);
-        compatibilidadeCache[appid] = resultado;
-        return resultado;
-      } else {
+      if (excludeFromFamilySharing || isFree || requiresAccount) {
         resultado = false;
-        if (excludeFromFamilySharing) {
-          motivo = 'A editora marcou este jogo como inelegível para compartilhamento.';
-        } else if (isFree) {
-          motivo = 'Jogos Free-to-Play não são elegíveis para compartilhamento.';
-        } else if (requiresAccount) {
-          motivo = 'Este jogo requer conta de terceiros (EA, Ubisoft, etc).';
-        }
-        console.log(`❌ SteamDB: Jogo ${appid} NÃO compatível: ${motivo}`);
+        console.log(`❌ SteamDB: Jogo ${appid} NÃO é compatível`);
         compatibilidadeCache[appid] = resultado;
         return resultado;
       }
@@ -391,48 +351,10 @@ async function verificarCompatibilidadeFamilia(appid) {
     console.log(`⚠️ SteamDB falhou: ${error.message}`);
   }
   
-  // 🔹 MÉTODO 3: Steam (fallback final)
-  try {
-    const storeUrl = `https://store.steampowered.com/app/${appid}`;
-    console.log(`🌐 Verificando via Steam (fallback final): ${storeUrl}`);
-    
-    const response = await fetch(storeUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
-      }
-    });
-    
-    const html = await response.text();
-    
-    const temCompartilhamento = 
-      html.includes('Compartilhamento em família') || 
-      html.includes('Family Sharing') ||
-      html.includes('compartilhamento familiar');
-    
-    const naoDisponivel = 
-      html.includes('Compartilhamento em família não disponível') ||
-      html.includes('Family Sharing not available');
-    
-    if (temCompartilhamento && !naoDisponivel) {
-      resultado = true;
-      console.log(`✅ Steam (fallback): Jogo ${appid} compatível`);
-    } else if (naoDisponivel) {
-      resultado = false;
-      motivo = 'A Steam indica que este jogo não está disponível para compartilhamento.';
-      console.log(`❌ Steam (fallback): Jogo ${appid} NÃO compatível`);
-    } else {
-      resultado = true;
-      console.log(`⚠️ Steam (fallback): Jogo ${appid} - assumindo compatível`);
-    }
-  } catch (error) {
-    console.log(`⚠️ Steam fallback falhou: ${error.message}`);
-    resultado = true;
-  }
-  
-  compatibilidadeCache[appid] = resultado;
-  return resultado;
+  // 🔹 Se passou por todas, é compatível
+  console.log(`✅ Jogo ${appid} é compatível com Família Steam`);
+  compatibilidadeCache[appid] = true;
+  return true;
 }
 
 // 🔹 ============================================
