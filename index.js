@@ -902,19 +902,23 @@ async function registrarComandos() {
             autocomplete: true
           }
         ]
+      },
+      {
+        name: 'ranking',
+        description: 'Mostra o ranking da biblioteca da família'
       }
     ];
 
     await client.application.commands.set(commands);
-    console.log('✅ /tem registrado GLOBALMENTE!');
+    console.log('✅ /tem e /ranking registrados GLOBALMENTE!');
     
     const guild = client.guilds.cache.first();
     if (guild) {
       await guild.commands.set(commands);
-      console.log(`✅ /tem registrado no servidor: ${guild.name}`);
+      console.log(`✅ /tem e /ranking registrados no servidor: ${guild.name}`);
     }
   } catch (error) {
-    console.error('❌ Erro ao registrar /tem:', error);
+    console.error('❌ Erro ao registrar comandos:', error);
   }
 }
 
@@ -922,6 +926,7 @@ async function registrarComandos() {
 // 🔹 EVENTO: INTERACTION CREATE
 // 🔹 ============================================
 client.on('interactionCreate', async (interaction) => {
+  // 🔹 AUTOCOMPLETE (apenas para /tem)
   if (interaction.isAutocomplete()) {
     if (interaction.commandName === 'tem') {
       const valorDigitado = interaction.options.getString('jogo')?.toLowerCase() || '';
@@ -938,6 +943,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
+  // 🔹 COMANDO /tem
   if (interaction.isChatInputCommand() && interaction.commandName === 'tem') {
     const input = interaction.options.getString('jogo');
     
@@ -981,6 +987,25 @@ client.on('interactionCreate', async (interaction) => {
       });
     }
   }
+
+  // 🔹 COMANDO /ranking
+  if (interaction.isChatInputCommand() && interaction.commandName === 'ranking') {
+    await interaction.deferReply({ ephemeral: true });
+    
+    try {
+      const embedRanking = gerarRanking();
+      
+      await interaction.editReply({
+        embeds: [embedRanking]
+      });
+      
+    } catch (error) {
+      console.error('❌ Erro no comando /ranking:', error);
+      await interaction.editReply({
+        content: `❌ Ocorreu um erro ao gerar o ranking. Tente novamente mais tarde.`
+      });
+    }
+  }
 });
 
 // 🔹 ============================================
@@ -989,9 +1014,10 @@ client.on('interactionCreate', async (interaction) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   
-  if (message.content.toLowerCase() === '!ranking' || message.content.toLowerCase() === '!rank') {
-    await enviarRanking();
-  }
+  // 🔹 REMOVIDO: !ranking agora é /ranking
+  // if (message.content.toLowerCase() === '!ranking' || message.content.toLowerCase() === '!rank') {
+  //   await enviarRanking();
+  // }
   
   if (message.content.toLowerCase() === '!resetranking') {
     if (message.author.id !== DONO_ID) {
@@ -1081,7 +1107,7 @@ client.once('ready', async () => {
   try {
     const dono = await client.users.fetch(DONO_ID);
     if (dono) {
-      await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite !ranking\n🔎 Use /tem [jogo] - com sugestões automáticas!`);
+      await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite /ranking\n🔎 Use /tem [jogo] - com sugestões automáticas!`);
       console.log(`📨 Mensagem de inicialização enviada para o dono via DM`);
     }
   } catch (error) {
