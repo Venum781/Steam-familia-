@@ -277,7 +277,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsCompletas (VERSÃO CORRIGIDA)
+// 🔹 FUNÇÃO: buscarDLCsCompletas
 // 🔹 ============================================
 async function buscarDLCsCompletas(appid) {
   try {
@@ -328,7 +328,7 @@ async function buscarDLCsCompletas(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogoFamilia (VERSÃO CORRIGIDA)
+// 🔹 FUNÇÃO: verificarJogoFamilia
 // 🔹 ============================================
 async function verificarJogoFamilia(appid) {
   const resultados = [];
@@ -428,6 +428,44 @@ function formatarRespostaJogo(jogo, donos) {
   }
   
   return embed;
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: buscarSugestoesJogos (NOVA)
+// 🔹 ============================================
+async function buscarSugestoesJogos(termo) {
+  try {
+    if (!termo || termo.length < 2) {
+      return [
+        { name: 'Elden Ring', value: 'Elden Ring' },
+        { name: 'Counter-Strike 2', value: 'Counter-Strike 2' },
+        { name: 'Dying Light', value: 'Dying Light' },
+        { name: 'Sonic Frontiers', value: 'Sonic Frontiers' },
+        { name: 'Stardew Valley', value: 'Stardew Valley' }
+      ];
+    }
+
+    const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(termo)}&l=portuguese&cc=BR`;
+    const response = await fetchWithTimeout(url, 3000);
+    const data = await response.json();
+    
+    if (data.items && data.items.length > 0) {
+      const jogos = data.items
+        .filter(item => item.type === 'game')
+        .slice(0, 10)
+        .map(item => ({
+          name: item.name,
+          value: item.name
+        }));
+      
+      return jogos;
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('❌ Erro ao buscar sugestões:', error);
+    return [];
+  }
 }
 
 // 🔹 ============================================
@@ -743,12 +781,61 @@ async function checkSteamGames() {
 }
 
 // 🔹 ============================================
-// 🔹 EVENTO: /tem (SLASH COMMAND)
+// 🔹 FUNÇÃO: registrarComandos (COM AUTOCOMPLETE)
+// 🔹 ============================================
+async function registrarComandos() {
+  try {
+    const commands = [
+      {
+        name: 'tem',
+        description: 'Verifica se um jogo está na biblioteca da família',
+        options: [
+          {
+            name: 'jogo',
+            description: 'Nome do jogo ou link da Steam',
+            type: 3,
+            required: true,
+            autocomplete: true
+          }
+        ]
+      }
+    ];
+
+    const guild = client.guilds.cache.first();
+    if (guild) {
+      await guild.commands.set(commands);
+      console.log(`✅ /tem registrado no servidor: ${guild.name}`);
+    } else {
+      await client.application.commands.set(commands);
+      console.log('✅ /tem registrado globalmente');
+    }
+  } catch (error) {
+    console.error('❌ Erro ao registrar /tem:', error);
+  }
+}
+
+// 🔹 ============================================
+// 🔹 EVENTO: INTERACTION CREATE (COM AUTOCOMPLETE)
 // 🔹 ============================================
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
+  // 🔹 AUTOCOMPLETE
+  if (interaction.isAutocomplete()) {
+    if (interaction.commandName === 'tem') {
+      const valorDigitado = interaction.options.getString('jogo')?.toLowerCase() || '';
+      
+      try {
+        const sugestoes = await buscarSugestoesJogos(valorDigitado);
+        await interaction.respond(sugestoes);
+      } catch (error) {
+        console.error('❌ Erro no autocomplete:', error);
+        await interaction.respond([]);
+      }
+    }
+    return;
+  }
 
-  if (interaction.commandName === 'tem') {
+  // 🔹 COMANDO /tem
+  if (interaction.isChatInputCommand() && interaction.commandName === 'tem') {
     const input = interaction.options.getString('jogo');
     
     await interaction.deferReply({ ephemeral: true });
@@ -760,9 +847,6 @@ client.on('interactionCreate', async (interaction) => {
         const appid = extrairAppIdDaUrl(input);
         if (appid) {
           jogo = await buscarJogoPorAppId(appid);
-          if (jogo) {
-            console.log(`🔍 Buscando por AppID: ${appid} (${jogo.nome})`);
-          }
         }
       }
       
@@ -792,39 +876,6 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 });
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: registrarComandos
-// 🔹 ============================================
-async function registrarComandos() {
-  try {
-    const commands = [
-      {
-        name: 'tem',
-        description: 'Verifica se um jogo está na biblioteca da família',
-        options: [
-          {
-            name: 'jogo',
-            description: 'Nome do jogo ou link da Steam',
-            type: 3,
-            required: true
-          }
-        ]
-      }
-    ];
-
-    const guild = client.guilds.cache.first();
-    if (guild) {
-      await guild.commands.set(commands);
-      console.log(`✅ /tem registrado no servidor: ${guild.name}`);
-    } else {
-      await client.application.commands.set(commands);
-      console.log('✅ /tem registrado globalmente');
-    }
-  } catch (error) {
-    console.error('❌ Erro ao registrar /tem:', error);
-  }
-}
 
 // 🔹 ============================================
 // 🔹 COMANDOS NO CHAT
@@ -892,7 +943,7 @@ client.once('ready', async () => {
 
   const channelNotificacoes = client.channels.cache.get(CHANNEL_NOTIFICACOES);
   if (channelNotificacoes) {
-    await channelNotificacoes.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite !ranking\n🔎 Use /tem [jogo] para consultar a biblioteca`);
+    await channelNotificacoes.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite !ranking\n🔎 Use /tem [jogo] - com sugestões automáticas!`);
   }
 
   const channelConquistas = client.channels.cache.get(CHANNEL_CONQUISTAS);
