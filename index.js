@@ -234,6 +234,28 @@ async function getAchievements(steamId, appid) {
   return [];
 }
 
+// 🔹 ============================================
+// 🔹 FUNÇÃO: buscarIconeConquista (NOVA)
+// 🔹 ============================================
+async function buscarIconeConquista(appid, apiname) {
+  try {
+    const url = `https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key=${process.env.STEAM_KEY}&appid=${appid}&l=portuguese`;
+    const response = await fetchWithTimeout(url, 3000);
+    const data = await response.json();
+    
+    if (data.game?.availableGameStats?.achievements) {
+      const achievement = data.game.availableGameStats.achievements.find(a => a.name === apiname);
+      if (achievement && achievement.icon) {
+        return achievement.icon;
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error(`❌ Erro ao buscar ícone da conquista:`, error.message);
+    return null;
+  }
+}
+
 async function getCurrentGame(steamId) {
   try {
     const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${process.env.STEAM_KEY}&steamids=${steamId}`;
@@ -662,9 +684,10 @@ async function verificarConquistas(steamId, games, mention, userName) {
           for (const conquista of novas.slice(0, MAX_CONQUISTAS_POR_JOGO)) {
             const nomeConquista = await getAchievementName(steamId, appid, conquista.apiname);
             
-            // 🔹 CONSTRÓI A URL DA IMAGEM DA CONQUISTA
-            const iconUrl = conquista.icon ? 
-              `https://shared.fastly.steamstatic.com/community_assets/images/apps/${appid}/${conquista.icon}.jpg` :
+            // 🔹 Busca o ícone da conquista via Schema
+            const iconName = await buscarIconeConquista(appid, conquista.apiname);
+            const iconUrl = iconName ? 
+              `https://shared.fastly.steamstatic.com/community_assets/images/apps/${appid}/${iconName}.jpg` :
               null;
 
             const embed = new EmbedBuilder()
@@ -681,7 +704,7 @@ async function verificarConquistas(steamId, games, mention, userName) {
               .setFooter({ text: `+${novas.length} nova(s) conquista(s)` })
               .setTimestamp();
 
-            // 🔹 ADICIONA A IMAGEM DA CONQUISTA NO EMBED
+            // 🔹 Adiciona a imagem da conquista se disponível
             if (iconUrl) {
               embed.setImage(iconUrl);
             }
