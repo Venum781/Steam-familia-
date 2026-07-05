@@ -264,68 +264,80 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsCompletas (VERSÃO MELHORADA)
+// 🔹 FUNÇÃO: buscarDLCsCompletas (VIA SCRAPING DA LOJA)
 // 🔹 ============================================
 async function buscarDLCsCompletas(appid) {
   try {
-    // 🔹 MÉTODO 1: API da Steam
-    const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
-    const response = await fetchWithTimeout(url, 5000);
-    const data = await response.json();
+    console.log(`🔍 Buscando conteúdos adicionais para ${appid} via página da loja...`);
     
-    let dlcsIds = [];
-    let gameName = '';
+    const dlcsCompletas = [];
+    let gameName = `Jogo ${appid}`;
     
-    if (data[appid]?.success) {
-      const gameData = data[appid].data;
-      gameName = gameData.name || `Jogo ${appid}`;
-      
-      // 🔹 DLCs listadas diretamente
-      if (gameData.dlc && gameData.dlc.length > 0) {
-        dlcsIds.push(...gameData.dlc);
-      }
-      
-      // 🔹 Pacotes/bundles relacionados
-      if (gameData.packages && gameData.packages.length > 0) {
-        for (const pkg of gameData.packages) {
-          if (pkg && pkg.appid) {
-            dlcsIds.push(pkg.appid);
-          }
-        }
-      }
-    }
-    
-    // 🔹 MÉTODO 2: Scraping da página da loja para encontrar mais DLCs
+    // 🔹 Nome do jogo
     try {
-      const storeUrl = `https://store.steampowered.com/app/${appid}`;
-      const storeResponse = await fetchWithTimeout(storeUrl, 5000);
-      const html = await storeResponse.text();
-      
-      // 🔹 Procura por links de DLCs na página
-      const dlcRegex = /store\.steampowered\.com\/app\/(\d+)\/["']/g;
-      let match;
-      while ((match = dlcRegex.exec(html)) !== null) {
-        const foundAppid = parseInt(match[1]);
-        if (foundAppid !== appid && !dlcsIds.includes(foundAppid)) {
-          dlcsIds.push(foundAppid);
-        }
+      const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
+      const response = await fetchWithTimeout(url, 3000);
+      const data = await response.json();
+      if (data[appid]?.success) {
+        gameName = data[appid].data.name;
       }
     } catch (error) {
-      console.log(`⚠️ Scraping da loja falhou:`, error.message);
+      console.log(`⚠️ API falhou:`, error.message);
     }
     
-    // 🔹 Remove duplicatas
-    dlcsIds = [...new Set(dlcsIds)];
+    // 🔹 Acessar a página da loja
+    const storeUrl = `https://store.steampowered.com/app/${appid}`;
+    console.log(`🌐 Acessando: ${storeUrl}`);
     
-    if (dlcsIds.length === 0) {
-      console.log(`ℹ️ ${gameName || 'Jogo'} não possui conteúdos adicionais`);
+    const storeResponse = await fetchWithTimeout(storeUrl, 10000);
+    const html = await storeResponse.text();
+    
+    // 🔹 Extrair TODOS os links de DLCs
+    const dlcIdsEncontrados = new Set();
+    let match;
+    
+    // Padrão 1: Links da loja
+    const dlcRegex = /store\.steampowered\.com\/app\/(\d+)\/?/g;
+    while ((match = dlcRegex.exec(html)) !== null) {
+      const foundAppid = parseInt(match[1]);
+      if (foundAppid !== appid) {
+        dlcIdsEncontrados.add(foundAppid);
+      }
+    }
+    
+    // Padrão 2: JSON com appid
+    const jsonRegex = /"appid"\s*:\s*(\d+)/g;
+    while ((match = jsonRegex.exec(html)) !== null) {
+      const foundAppid = parseInt(match[1]);
+      if (foundAppid !== appid) {
+        dlcIdsEncontrados.add(foundAppid);
+      }
+    }
+    
+    // Padrão 3: data-ds-appid
+    const dsRegex = /data-ds-appid="(\d+)"/g;
+    while ((match = dsRegex.exec(html)) !== null) {
+      const foundAppid = parseInt(match[1]);
+      if (foundAppid !== appid) {
+        dlcIdsEncontrados.add(foundAppid);
+      }
+    }
+    
+    if (dlcIdsEncontrados.size === 0) {
+      console.log(`ℹ️ ${gameName} - Nenhum conteúdo adicional encontrado na página`);
       return [];
     }
     
-    console.log(`📦 ${gameName} possui ${dlcsIds.length} conteúdo(s) adicional(is)`);
+    console.log(`📦 ${gameName} - Encontrados ${dlcIdsEncontrados.size} conteúdo(s) na página`);
     
-    const dlcsCompletas = [];
-    for (const dlcAppid of dlcsIds) {
+    // 🔹 Buscar nome de cada DLC
+    let count = 0;
+    for (const dlcAppid of dlcIdsEncontrados) {
+      if (count >= 30) {
+        console.log(`   ⏭️ Limite de 30 DLCs atingido`);
+        break;
+      }
+      
       try {
         const dlcUrl = `https://store.steampowered.com/api/appdetails?appids=${dlcAppid}&l=portuguese`;
         const dlcResponse = await fetchWithTimeout(dlcUrl, 3000);
@@ -333,22 +345,25 @@ async function buscarDLCsCompletas(appid) {
         
         if (dlcData[dlcAppid]?.success) {
           const dlcInfo = dlcData[dlcAppid].data;
-          // 🔹 Filtra para não incluir o jogo principal novamente
-          if (dlcInfo.type && dlcInfo.type !== 'game') {
+          if (dlcInfo.type === 'dlc' || dlcInfo.type === 'expansion' || 
+              dlcInfo.type === 'game' || dlcInfo.type === 'bundle') {
             dlcsCompletas.push({
               appid: dlcAppid,
               nome: dlcInfo.name || `Conteúdo ${dlcAppid}`,
               capa: dlcInfo.header_image || dlcInfo.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${dlcAppid}/header.jpg`
             });
-            console.log(`   ✅ ${dlcInfo.name}`);
+            console.log(`   ✅ ${count + 1}. ${dlcInfo.name}`);
+            count++;
           }
         }
       } catch (error) {
-        console.error(`   ❌ Erro no conteúdo ${dlcAppid}:`, error.message);
+        console.error(`   ❌ Erro na DLC ${dlcAppid}:`, error.message);
       }
     }
     
+    console.log(`📦 Total de DLCs identificadas: ${dlcsCompletas.length}`);
     return dlcsCompletas;
+    
   } catch (error) {
     console.error(`❌ Erro ao buscar conteúdos adicionais:`, error.message);
     return [];
@@ -364,7 +379,7 @@ async function verificarJogoFamilia(appid) {
   const apiKey = process.env.STEAM_KEY;
   
   const todasDLCs = await buscarDLCsCompletas(appid);
-  console.log(`📦 Total de conteúdos adicionais: ${todasDLCs.length}`);
+  console.log(`📦 Total de DLCs para verificar: ${todasDLCs.length}`);
   
   for (const steamId of steamIds) {
     try {
