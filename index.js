@@ -33,7 +33,6 @@ const compatibilidadeCache = {};
 // 🔹 ============================================
 // 🔹 LISTA DE JOGOS NÃO COMPATÍVEIS COM FAMÍLIA STEAM
 // 🔹 ============================================
-// (Baseado na lista fornecida pelo usuário)
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
   107410: "Arma 3",
@@ -313,13 +312,11 @@ async function buscarJogoSteam(nomeJogo) {
 // 🔹 FUNÇÃO: verificarCompatibilidadeFamilia
 // 🔹 ============================================
 async function verificarCompatibilidadeFamilia(appid) {
-  // 🔹 Verifica cache primeiro
   if (compatibilidadeCache[appid] !== undefined) {
     console.log(`📦 Usando cache para ${appid}: ${compatibilidadeCache[appid]}`);
     return compatibilidadeCache[appid];
   }
   
-  // 🔹 VERIFICA LISTA MANUAL PRIMEIRO
   if (JOGOS_INCOMPATIVEIS[appid]) {
     console.log(`📋 Lista manual: Jogo ${appid} (${JOGOS_INCOMPATIVEIS[appid]}) NÃO é compatível`);
     compatibilidadeCache[appid] = false;
@@ -328,7 +325,6 @@ async function verificarCompatibilidadeFamilia(appid) {
   
   let resultado = true;
   
-  // 🔹 SteamDB (fallback)
   try {
     const url = `https://steamdb.info/api/v1/appdetails/?appid=${appid}`;
     const response = await fetchWithTimeout(url, 5000);
@@ -351,7 +347,6 @@ async function verificarCompatibilidadeFamilia(appid) {
     console.log(`⚠️ SteamDB falhou: ${error.message}`);
   }
   
-  // 🔹 Se passou por todas, é compatível
   console.log(`✅ Jogo ${appid} é compatível com Família Steam`);
   compatibilidadeCache[appid] = true;
   return true;
@@ -430,7 +425,6 @@ function formatarRespostaJogo(jogo, donos, totalDLCs, compativel) {
     embed.setThumbnail(jogo.capa);
   }
   
-  // 🔹 Adiciona aviso de compatibilidade (APENAS SE NÃO FOR COMPATÍVEL)
   if (!compativel) {
     embed.addFields({
       name: '⚠️ ATENÇÃO',
@@ -549,7 +543,7 @@ async function buscarSugestoesJogos(termo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarConquistas
+// 🔹 FUNÇÃO: verificarConquistas (ATUALIZADA COM PROGRESSO)
 // 🔹 ============================================
 async function verificarConquistas(steamId, games, mention, userName) {
   if (!games?.length) return;
@@ -628,21 +622,28 @@ async function verificarConquistas(steamId, games, mention, userName) {
       }
 
       const conquistas = await getAchievements(steamId, appid);
-      if (!conquistas?.length) continue;
+      if (!conquistas?.length) {
+        console.log(`   ⏭️ ${gameName} sem conquistas`);
+        continue;
+      }
 
       const desbloqueadas = conquistas.filter(c => c.achieved === 1);
       const total = desbloqueadas.length;
+      const totalConquistasJogo = conquistas.length;
 
       if (!db.conquistas[steamId][appid] || !primeiraVerificacaoConcluida) {
         db.conquistas[steamId][appid] = {
           total: total,
-          nomes: desbloqueadas.map(c => c.apiname)
+          nomes: desbloqueadas.map(c => c.apiname),
+          totalJogo: totalConquistasJogo
         };
+        console.log(`   💾 ${gameName}: ${total}/${totalConquistasJogo} conquistas salvas`);
         continue;
       }
 
       const dadosSalvos = db.conquistas[steamId][appid];
       const totalAntigo = dadosSalvos.total || 0;
+      const totalJogo = dadosSalvos.totalJogo || totalConquistasJogo;
 
       if (total > totalAntigo) {
         const nomesAntigos = dadosSalvos.nomes || [];
@@ -650,7 +651,11 @@ async function verificarConquistas(steamId, games, mention, userName) {
 
         if (novas.length) {
           novasConquistas += novas.length;
-          console.log(`🎮 ${userName} +${novas.length} conquista(s) em ${gameName}!`);
+          
+          const faltam = totalJogo - total;
+          const progresso = `${total}/${totalJogo}`;
+          
+          console.log(`🎮 ${userName} +${novas.length} conquista(s) em ${gameName}! (${progresso})`);
 
           const gameInfo = await getGameDetails(appid);
 
@@ -664,8 +669,10 @@ async function verificarConquistas(steamId, games, mention, userName) {
               .addFields(
                 { name: '🎮 Jogo', value: gameName, inline: true },
                 { name: '👤 Jogador', value: mention, inline: true },
+                { name: '📊 Progresso', value: `${progresso} conquistas (${faltam > 0 ? `faltam ${faltam}` : 'COMPLETO! 🎉'})`, inline: true },
                 { name: '📅 Data', value: new Date().toLocaleDateString('pt-BR'), inline: true }
               )
+              .setFooter({ text: `+${novas.length} nova(s) conquista(s)` })
               .setTimestamp();
 
             await channelConquistas.send({
@@ -676,14 +683,15 @@ async function verificarConquistas(steamId, games, mention, userName) {
 
           db.conquistas[steamId][appid] = {
             total: total,
-            nomes: desbloqueadas.map(c => c.apiname)
+            nomes: desbloqueadas.map(c => c.apiname),
+            totalJogo: totalJogo
           };
           await enviarRanking();
           salvarDB(db);
         }
       }
     } catch (error) {
-      console.error(`❌ Erro em ${gameName}:`, error.message);
+      console.error(`   ❌ Erro em ${gameName}:`, error.message);
     }
   }
 
@@ -889,7 +897,6 @@ async function registrarComandos() {
 // 🔹 EVENTO: INTERACTION CREATE
 // 🔹 ============================================
 client.on('interactionCreate', async (interaction) => {
-  // 🔹 AUTOCOMPLETE
   if (interaction.isAutocomplete()) {
     if (interaction.commandName === 'tem') {
       const valorDigitado = interaction.options.getString('jogo')?.toLowerCase() || '';
@@ -906,7 +913,6 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // 🔹 COMANDO /tem
   if (interaction.isChatInputCommand() && interaction.commandName === 'tem') {
     const input = interaction.options.getString('jogo');
     
@@ -1005,7 +1011,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // 🔹 ============================================
-// 🔹 EVENTO: DESLIGAMENTO (ENVIA DM PARA O DONO)
+// 🔹 EVENTO: DESLIGAMENTO
 // 🔹 ============================================
 process.on('SIGINT', async () => {
   console.log('⚠️ Bot sendo desligado...');
@@ -1036,7 +1042,7 @@ process.on('SIGTERM', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 READY (COM DM PARA O DONO)
+// 🔹 READY
 // 🔹 ============================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -1047,7 +1053,6 @@ client.once('ready', async () => {
   console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
   console.log(`💾 Banco de dados: ${DB_FILE}`);
 
-  // 🔹 Envia mensagem de inicialização APENAS para o dono via DM
   try {
     const dono = await client.users.fetch(DONO_ID);
     if (dono) {
@@ -1058,7 +1063,6 @@ client.once('ready', async () => {
     console.error('❌ Erro ao enviar DM para o dono:', error);
   }
 
-  // 🔹 Mensagem no canal de conquistas (mantido para informar os usuários)
   const channelConquistas = client.channels.cache.get(CHANNEL_CONQUISTAS);
   if (channelConquistas) {
     await channelConquistas.send(`🏆 **SISTEMA DE CONQUISTAS ATIVADO!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n📝 Salvando conquistas existentes...`);
