@@ -277,7 +277,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarDLCsCompletas
+// 🔹 FUNÇÃO: buscarDLCsCompletas (VERSÃO CORRIGIDA)
 // 🔹 ============================================
 async function buscarDLCsCompletas(appid) {
   try {
@@ -285,41 +285,50 @@ async function buscarDLCsCompletas(appid) {
     const response = await fetchWithTimeout(url, 5000);
     const data = await response.json();
     
-    if (data[appid]?.success) {
-      const gameData = data[appid].data;
-      
-      if (gameData.dlc && gameData.dlc.length > 0) {
-        const dlcsCompletas = [];
-        for (const dlcAppid of gameData.dlc) {
-          try {
-            const dlcUrl = `https://store.steampowered.com/api/appdetails?appids=${dlcAppid}&l=portuguese`;
-            const dlcResponse = await fetchWithTimeout(dlcUrl, 3000);
-            const dlcData = await dlcResponse.json();
-            
-            if (dlcData[dlcAppid]?.success) {
-              const dlcInfo = dlcData[dlcAppid].data;
-              dlcsCompletas.push({
-                appid: dlcAppid,
-                nome: dlcInfo.name || `DLC ${dlcAppid}`,
-                capa: dlcInfo.header_image || dlcInfo.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${dlcAppid}/header.jpg`
-              });
-            }
-          } catch (error) {
-            console.error(`❌ Erro ao buscar DLC ${dlcAppid}:`, error.message);
-          }
+    if (!data[appid]?.success) {
+      console.log(`⚠️ Jogo ${appid} não encontrado`);
+      return [];
+    }
+    
+    const gameData = data[appid].data;
+    
+    if (!gameData.dlc || gameData.dlc.length === 0) {
+      console.log(`ℹ️ ${gameData.name} não possui DLCs`);
+      return [];
+    }
+    
+    console.log(`📦 ${gameData.name} possui ${gameData.dlc.length} DLC(s)`);
+    
+    const dlcsCompletas = [];
+    for (const dlcAppid of gameData.dlc) {
+      try {
+        const dlcUrl = `https://store.steampowered.com/api/appdetails?appids=${dlcAppid}&l=portuguese`;
+        const dlcResponse = await fetchWithTimeout(dlcUrl, 3000);
+        const dlcData = await dlcResponse.json();
+        
+        if (dlcData[dlcAppid]?.success) {
+          const dlcInfo = dlcData[dlcAppid].data;
+          dlcsCompletas.push({
+            appid: dlcAppid,
+            nome: dlcInfo.name || `DLC ${dlcAppid}`,
+            capa: dlcInfo.header_image || dlcInfo.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${dlcAppid}/header.jpg`
+          });
+          console.log(`   ✅ DLC: ${dlcInfo.name}`);
         }
-        return dlcsCompletas;
+      } catch (error) {
+        console.error(`   ❌ Erro na DLC ${dlcAppid}:`, error.message);
       }
     }
-    return [];
+    
+    return dlcsCompletas;
   } catch (error) {
-    console.error(`❌ Erro ao buscar DLCs do jogo ${appid}:`, error.message);
+    console.error(`❌ Erro ao buscar DLCs:`, error.message);
     return [];
   }
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogoFamilia
+// 🔹 FUNÇÃO: verificarJogoFamilia (VERSÃO CORRIGIDA)
 // 🔹 ============================================
 async function verificarJogoFamilia(appid) {
   const resultados = [];
@@ -327,7 +336,7 @@ async function verificarJogoFamilia(appid) {
   const apiKey = process.env.STEAM_KEY;
   
   const todasDLCs = await buscarDLCsCompletas(appid);
-  console.log(`📦 DLCs disponíveis para este jogo: ${todasDLCs.length}`);
+  console.log(`📦 Total de DLCs: ${todasDLCs.length}`);
   
   for (const steamId of steamIds) {
     try {
@@ -348,6 +357,7 @@ async function verificarJogoFamilia(appid) {
               const temDlc = data.response.games.some(g => g.appid === dlc.appid);
               if (temDlc) {
                 dlcsDoUsuario.push(dlc);
+                console.log(`   ✅ ${userName} tem: ${dlc.nome}`);
               }
             }
           }
@@ -784,7 +794,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: registrarComandos (NOVA)
+// 🔹 FUNÇÃO: registrarComandos
 // 🔹 ============================================
 async function registrarComandos() {
   try {
@@ -803,33 +813,29 @@ async function registrarComandos() {
       }
     ];
 
-    // 🔹 Registra no servidor atual (mais rápido)
     const guild = client.guilds.cache.first();
     if (guild) {
       await guild.commands.set(commands);
-      console.log(`✅ Comando /tem registrado no servidor: ${guild.name}`);
+      console.log(`✅ /tem registrado no servidor: ${guild.name}`);
     } else {
-      // 🔹 Fallback: registro global
       await client.application.commands.set(commands);
-      console.log('✅ Comando /tem registrado globalmente!');
+      console.log('✅ /tem registrado globalmente');
     }
   } catch (error) {
-    console.error('❌ Erro ao registrar comandos:', error);
+    console.error('❌ Erro ao registrar /tem:', error);
   }
 }
 
 // 🔹 ============================================
-// 🔹 COMANDOS NO CHAT (MENSAGENS NORMAIS)
+// 🔹 COMANDOS NO CHAT
 // 🔹 ============================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   
-  // 🔹 Comando !ranking
   if (message.content.toLowerCase() === '!ranking' || message.content.toLowerCase() === '!rank') {
     await enviarRanking();
   }
   
-  // 🔹 Comando !resetRanking (apenas dono)
   if (message.content.toLowerCase() === '!resetranking') {
     if (message.author.id !== 'SEU_ID_DISCORD_AQUI') {
       await message.reply({
@@ -873,20 +879,14 @@ client.on('messageCreate', async (message) => {
 });
 
 // 🔹 ============================================
-// 🔹 READY (COM REGISTRO FORÇADO DO COMANDO)
+// 🔹 READY
 // 🔹 ============================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   console.log(`📡 Conectado em ${client.guilds.cache.size} servidor(es)`);
 
-  // 🔹 ============================================
-  // 🔹 REGISTRA O COMANDO /tem FORÇADAMENTE
-  // 🔹 ============================================
   await registrarComandos();
 
-  // 🔹 ============================================
-  // 🔹 RESTO DO CÓDIGO NORMAL
-  // 🔹 ============================================
   console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
   console.log(`💾 Banco de dados: ${DB_FILE}`);
 
