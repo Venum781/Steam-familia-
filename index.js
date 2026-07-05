@@ -267,25 +267,39 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia
+// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia (VIA PÁGINA DA LOJA)
 // 🔹 ============================================
 async function verificarCompatibilidadeFamilia(appid) {
   try {
-    const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
-    const response = await fetchWithTimeout(url, 5000);
-    const data = await response.json();
+    const storeUrl = `https://store.steampowered.com/app/${appid}`;
+    console.log(`🌐 Verificando compatibilidade: ${storeUrl}`);
     
-    if (data[appid]?.success) {
-      const gameData = data[appid].data;
-      
-      const naoCompativel = 
-        gameData.is_free === true ||
-        (gameData.drm && gameData.drm.includes('Denuvo')) ||
-        (gameData.drm && gameData.drm.includes('第三方'));
-      
-      return !naoCompativel;
+    const response = await fetchWithTimeout(storeUrl, 8000);
+    const html = await response.text();
+    
+    // 🔹 Procura por "Compartilhamento em família" ou "Family Sharing"
+    const temCompartilhamento = 
+      html.includes('Compartilhamento em família') || 
+      html.includes('Family Sharing');
+    
+    // 🔹 Verifica se está marcado como NÃO disponível
+    const naoDisponivel = 
+      html.includes('Compartilhamento em família não disponível') ||
+      html.includes('Family Sharing not available');
+    
+    // 🔹 Se tiver a informação e não estiver marcado como não disponível, é compatível
+    if (temCompartilhamento && !naoDisponivel) {
+      console.log(`✅ Jogo ${appid} é compatível com Família Steam`);
+      return true;
+    } else if (naoDisponivel) {
+      console.log(`❌ Jogo ${appid} NÃO é compatível com Família Steam`);
+      return false;
+    } else {
+      // 🔹 Se não tiver a informação, assume que NÃO é compatível
+      console.log(`⚠️ Jogo ${appid} não possui informação de compartilhamento - ASSUMINDO INCOMPATÍVEL`);
+      return false;
     }
-    return true;
+    
   } catch (error) {
     console.error(`❌ Erro ao verificar compatibilidade:`, error.message);
     return true;
@@ -351,7 +365,7 @@ async function verificarJogoFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: formatarRespostaJogo
+// 🔹 FUNÇÃO: formatarRespostaJogo (ATUALIZADA)
 // 🔹 ============================================
 function formatarRespostaJogo(jogo, donos, totalDLCs, compativel) {
   const embed = new EmbedBuilder()
@@ -365,10 +379,11 @@ function formatarRespostaJogo(jogo, donos, totalDLCs, compativel) {
     embed.setThumbnail(jogo.capa);
   }
   
+  // 🔹 Adiciona aviso de compatibilidade (APENAS SE NÃO FOR COMPATÍVEL)
   if (!compativel) {
     embed.addFields({
       name: '⚠️ ATENÇÃO',
-      value: 'Este jogo **não é compatível com Compartilhamento em Família**.\nMotivo: Pode exigir conta de terceiros (EA, Ubisoft, etc) ou possui DRM que impede o compartilhamento.',
+      value: '⚠️ **Este jogo NÃO tem suporte para Compartilhamento em Família!**\n\nVerifique a página do jogo na Steam para mais informações.',
       inline: false
     });
   }
