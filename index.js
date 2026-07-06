@@ -196,16 +196,37 @@ async function getAchievementIcon(appid, apiname) {
     } catch (e) { return null; }
 }
 
+// 🔹 FUNÇÃO CORRIGIDA: BUSCA JOGO COM CAPA
 async function buscarJogoSteam(nome) {
     try {
-        const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(nome)}&l=portuguese&cc=BR&max=1`;
-        const data = await fetchWithTimeout(url, 5000);
-        if (data.items?.length) {
-            const j = data.items[0];
-            return { appid: j.id, nome: j.name, url: `https://store.steampowered.com/app/${j.id}` };
+        // 1. Busca o jogo pelo nome
+        const searchUrl = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(nome)}&l=portuguese&cc=BR&max=1`;
+        const searchData = await fetchWithTimeout(searchUrl, 5000);
+        if (!searchData.items?.length) return null;
+
+        const jogo = searchData.items[0];
+        const appid = jogo.id;
+
+        // 2. Busca os detalhes completos para obter a capa
+        const detailsUrl = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
+        const detailsData = await fetchWithTimeout(detailsUrl, 5000);
+
+        let capa = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`; // fallback padrão
+        if (detailsData[appid]?.success) {
+            const data = detailsData[appid].data;
+            capa = data.header_image || data.capsule_image || capa;
         }
+
+        return {
+            appid: appid,
+            nome: jogo.name,
+            url: `https://store.steampowered.com/app/${appid}`,
+            capa: capa
+        };
+    } catch (error) {
+        console.error('❌ Erro ao buscar jogo Steam:', error.message);
         return null;
-    } catch (e) { return null; }
+    }
 }
 
 async function verificarJogoFamilia(appid) {
@@ -225,7 +246,7 @@ async function verificarJogoFamilia(appid) {
 }
 
 // ============================
-// CONQUISTAS (CORRIGIDO PARA NÃO SPAMMAR)
+// CONQUISTAS
 // ============================
 async function verificarConquistas(steamId, games, mention, userName) {
     if (!games?.length) return;
@@ -235,7 +256,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
     if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
     if (!db.jogosRecentes[steamId]) db.jogosRecentes[steamId] = [];
 
-    // Pega jogos recentes (jogados agora ou últimos)
     let recentes = games.filter(g => g.rtime_last_played > 0)
         .sort((a, b) => b.rtime_last_played - a.rtime_last_played)
         .slice(0, 5);
@@ -360,7 +380,7 @@ async function enviarRanking(forcar = false) {
 }
 
 // ============================
-// LOOP PRINCIPAL (SEM PROMOÇÕES)
+// LOOP PRINCIPAL
 // ============================
 async function checkSteamGames() {
     console.log(`🔄 [${new Date().toLocaleTimeString()}] VERIFICANDO...`);
@@ -380,10 +400,8 @@ async function checkSteamGames() {
                 const discordId = discordUsers[sid];
                 const mention = discordId ? `<@${discordId}>` : userName;
 
-                // Conquistas
                 await verificarConquistas(sid, current, mention, userName);
 
-                // Novos jogos - comparando por appid (NÃO por nome)
                 if (!previousGames[sid]) {
                     previousGames[sid] = current;
                 } else {
@@ -401,7 +419,6 @@ async function checkSteamGames() {
                             }
                         }
                     }
-                    // Atualiza previousGames (mantém apenas os últimos 50 para não crescer)
                     previousGames[sid] = current.slice(-50);
                 }
             } catch (e) {
@@ -409,7 +426,6 @@ async function checkSteamGames() {
             }
         }
 
-        // Verifica se jogos da lista /quero foram comprados (próprio usuário ou família)
         await verificarJogosCompradosQuero();
         await verificarJogosCompradosFamiliaQuero();
 
@@ -521,8 +537,10 @@ client.on('interactionCreate', async (interaction) => {
         }
         return;
     }
+
     if (!interaction.isChatInputCommand()) return;
 
+    // /tem - COM CAPA CORRIGIDA
     if (interaction.commandName === 'tem') {
         await interaction.deferReply({ ephemeral: true });
         const input = interaction.options.getString('jogo');
@@ -535,6 +553,10 @@ client.on('interactionCreate', async (interaction) => {
             .setURL(jogo.url)
             .setDescription(donos.length ? `👤 **${donos.length} membro(s) possui(em):**\n${donos.map(d => `• ${d.discordId ? `<@${d.discordId}>` : d.nome}`).join('\n')}` : '😕 Nenhum membro da família possui este jogo.')
             .setTimestamp();
+        // 🔹 ADICIONA A CAPA
+        if (jogo.capa) {
+            embed.setThumbnail(jogo.capa);
+        }
         await interaction.editReply({ embeds: [embed] });
     }
 
@@ -552,7 +574,6 @@ client.on('interactionCreate', async (interaction) => {
         if (db.listaQuero[interaction.user.id].some(j => j.appid === jogo.appid)) {
             return interaction.editReply(`ℹ️ ${jogo.nome} já está na sua lista.`);
         }
-        // Verifica se alguém da família já tem
         const donos = await verificarJogoFamilia(jogo.appid);
         if (donos.length) {
             return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${donos.map(d => d.discordId ? `<@${d.discordId}>` : d.nome).join(', ')} já possui.`);
@@ -696,7 +717,6 @@ client.once('clientReady', async () => {
     console.log(`✅ Bot online: ${client.user.tag}`);
     await registrarComandos();
 
-    // Restaurar ranking
     const ok = await restaurarRankingDoCanal();
     if (!ok) {
         carregarRanking();
@@ -708,7 +728,6 @@ client.once('clientReady', async () => {
         }
     }
 
-    // Vincular automaticamente
     const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
     for (const sid of steamIds) {
         const did = discordUsers[sid];
@@ -721,10 +740,9 @@ client.once('clientReady', async () => {
 
     try {
         const dono = await client.users.fetch(DONO_ID);
-        if (dono) await dono.send('🚀 Bot Steam Família online! (versão enxuta)');
+        if (dono) await dono.send('🚀 Bot Steam Família online! (com capas corrigidas)');
     } catch (e) {}
 
-    // Loop principal
     setImmediate(async () => {
         console.log('🎮 Iniciando verificação...');
         await checkSteamGames();
