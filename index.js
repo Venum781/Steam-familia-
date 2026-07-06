@@ -2218,7 +2218,7 @@ async function restaurarRankingDoCanal() {
 }
 
 // 🔹 ============================================
-// 🔹 HEALTH CHECK MELHORADO
+// 🔹 HEALTH CHECK MELHORADO (RESPOSTA IMEDIATA)
 // 🔹 ============================================
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
@@ -2231,8 +2231,7 @@ const server = http.createServer((req, res) => {
                 rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB',
                 heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB',
                 heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB'
-            },
-            busy: rateLimiter.lastRequest > Date.now() - 10000
+            }
         }));
     } else {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -2282,7 +2281,7 @@ process.on('SIGINT', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 EVENTO clientReady (ANTIGO ready)
+// 🔹 EVENTO clientReady
 // 🔹 ============================================
 client.once('clientReady', async () => {
     console.log(`✅ Bot online como ${client.user.tag}`);
@@ -2312,12 +2311,13 @@ client.once('clientReady', async () => {
 
     console.log(`🏆 SISTEMA DE CONQUISTAS ATIVADO! Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos`);
 
-    console.log('🎮 Iniciando verificação inicial...');
-    await checkSteamGames();
+    // 🔹 Inicia a verificação inicial em background
+    setImmediate(async () => {
+        console.log('🎮 Iniciando verificação inicial...');
+        await checkSteamGames();
+    });
 
-    // 🔹 PRIMEIRA EXECUÇÃO - PROMOÇÕES IMEDIATAS
-    console.log('🚀🚀🚀 EXECUTANDO PRIMEIRA VERIFICAÇÃO DE PROMOÇÕES (IMEDIATA) 🚀🚀🚀');
-    
+    // 🔹 PRIMEIRA EXECUÇÃO - PROMOÇÕES IMEDIATAS (com delay)
     setTimeout(async () => {
         try {
             console.log('🚀 INICIANDO PRIMEIRA EXECUÇÃO DE PROMOÇÕES...');
@@ -2336,7 +2336,7 @@ client.once('clientReady', async () => {
         } catch (error) {
             console.error('❌ Erro na primeira execução de promoções:', error);
         }
-    }, 5000);
+    }, 10000); // Aumentei para 10 segundos para dar tempo do bot estabilizar
 
     console.log(`🔄 Iniciando monitoramento contínuo (${INTERVALO_VERIFICACAO / 1000}s)...`);
 
