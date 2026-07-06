@@ -127,6 +127,7 @@ function carregarDB() {
       if (!parsed.jogosNotificados) parsed.jogosNotificados = {};
       if (!parsed.jogosNotificadosPermanentes) parsed.jogosNotificadosPermanentes = {};
       if (!parsed.listaQuero) parsed.listaQuero = {};
+      if (!parsed.ultimaNotificacaoPromocao) parsed.ultimaNotificacaoPromocao = {};
       
       const totalJogos = Object.values(parsed.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
       console.log(`📊 Banco de dados carregado: ${totalJogos} jogos na lista /quero`);
@@ -153,7 +154,8 @@ function carregarDB() {
     steamLinks: {}, 
     jogosNotificados: {}, 
     listaQuero: {},
-    jogosNotificadosPermanentes: {}
+    jogosNotificadosPermanentes: {},
+    ultimaNotificacaoPromocao: {}
   };
 }
 
@@ -175,9 +177,10 @@ if (!db.steamLinks) db.steamLinks = {};
 if (!db.jogosNotificados) db.jogosNotificados = {};
 if (!db.listaQuero) db.listaQuero = {};
 if (!db.jogosNotificadosPermanentes) db.jogosNotificadosPermanentes = {};
+if (!db.ultimaNotificacaoPromocao) db.ultimaNotificacaoPromocao = {};
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: migrarDadosAntigos (NOVA)
+// 🔹 FUNÇÃO: migrarDadosAntigos
 // 🔹 ============================================
 function migrarDadosAntigos() {
   console.log('🔄 Verificando necessidade de migração de dados...');
@@ -189,7 +192,6 @@ function migrarDadosAntigos() {
   
   let jogosMigrados = 0;
   
-  // 🔹 Busca jogos notificados em promocoes (formato antigo)
   if (db.promocoes) {
     for (const [steamId, dados] of Object.entries(db.promocoes)) {
       if (dados && dados.jogosNotificados) {
@@ -212,7 +214,6 @@ function migrarDadosAntigos() {
     }
   }
   
-  // 🔹 Busca jogos notificados em jogosNotificados (formato antigo)
   if (db.jogosNotificados) {
     for (const [steamId, dados] of Object.entries(db.jogosNotificados)) {
       if (dados && typeof dados === 'object') {
@@ -247,13 +248,10 @@ function migrarDadosAntigos() {
   }
 }
 
-// 🔹 ============================================
-// 🔹 EXECUTA A MIGRAÇÃO
-// 🔹 ============================================
 migrarDadosAntigos();
 
 // 🔹 ============================================
-// 🔹 RANKING (COM PERSISTÊNCIA CORRIGIDA)
+// 🔹 RANKING
 // 🔹 ============================================
 
 const rankingPadrao = {
@@ -759,90 +757,10 @@ async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorStea
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: podeNotificarPromocao
-// 🔹 ============================================
-function podeNotificarPromocao(steamId) {
-  const hoje = new Date().toLocaleDateString('pt-BR');
-  
-  if (!db.promocoes[steamId]) {
-    db.promocoes[steamId] = {
-      data: hoje,
-      contador: 0
-    };
-    return true;
-  }
-  
-  if (db.promocoes[steamId].data !== hoje) {
-    db.promocoes[steamId].data = hoje;
-    db.promocoes[steamId].contador = 0;
-    return true;
-  }
-  
-  if (db.promocoes[steamId].contador >= 2) {
-    return false;
-  }
-  
-  return true;
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: registrarNotificacaoPromocao
-// 🔹 ============================================
-function registrarNotificacaoPromocao(steamId) {
-  const hoje = new Date().toLocaleDateString('pt-BR');
-  
-  if (!db.promocoes[steamId]) {
-    db.promocoes[steamId] = {
-      data: hoje,
-      contador: 1
-    };
-  } else {
-    db.promocoes[steamId].contador += 1;
-  }
-  
-  salvarDB(db);
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: jogoJaNotificado
-// 🔹 ============================================
-function jogoJaNotificado(steamId, appid) {
-  const hoje = new Date().toLocaleDateString('pt-BR');
-  
-  if (!db.jogosNotificados[steamId]) {
-    db.jogosNotificados[steamId] = {};
-  }
-  
-  if (!db.jogosNotificados[steamId][hoje]) {
-    db.jogosNotificados[steamId][hoje] = [];
-  }
-  
-  return db.jogosNotificados[steamId][hoje].includes(appid);
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: registrarJogoNotificado
-// 🔹 ============================================
-function registrarJogoNotificado(steamId, appid) {
-  const hoje = new Date().toLocaleDateString('pt-BR');
-  
-  if (!db.jogosNotificados[steamId]) {
-    db.jogosNotificados[steamId] = {};
-  }
-  
-  if (!db.jogosNotificados[steamId][hoje]) {
-    db.jogosNotificados[steamId][hoje] = [];
-  }
-  
-  db.jogosNotificados[steamId][hoje].push(appid);
-  salvarDB(db);
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoes (CORRIGIDA - SEM REPETIÇÃO)
+// 🔹 FUNÇÃO: verificarPromocoes (SISTEMA DIÁRIO - NÃO REPETE)
 // 🔹 ============================================
 async function verificarPromocoes() {
-  console.log(`🔄 Verificando promoções automaticamente...`);
+  console.log(`🔄 Verificando promoções diárias...`);
   
   const channelPromocoes = client.channels.cache.get(CHANNEL_PROMOCOES);
   if (!channelPromocoes) {
@@ -855,6 +773,16 @@ async function verificarPromocoes() {
     const userName = steamNames[steamId] || 'Venum';
     const mention = `<@${TEST_DISCORD_ID}>`;
     
+    // 🔹 VERIFICA SE JÁ NOTIFICOU HOJE
+    const hoje = new Date().toLocaleDateString('pt-BR');
+    const ultimaNotificacao = db.ultimaNotificacaoPromocao || {};
+    
+    if (ultimaNotificacao.data === hoje && ultimaNotificacao.steamId === steamId) {
+      console.log(`ℹ️ Já notificou promoções hoje (${hoje}). Próxima notificação apenas amanhã.`);
+      return;
+    }
+    
+    // 🔹 Busca a lista de desejos
     const lista = await buscarListaDesejosSteam(steamId);
     
     if (lista.length === 0) {
@@ -864,62 +792,95 @@ async function verificarPromocoes() {
     
     console.log(`📋 ${userName} tem ${lista.length} jogos na lista de desejos`);
     
-    let notificacoesEnviadas = 0;
-    
+    // 🔹 FILTRA JOGOS QUE JÁ FORAM NOTIFICADOS
+    const jogosNaoNotificados = [];
     for (const appid of lista) {
-      // 🔹 VERIFICA SE O JOGO JÁ FOI NOTIFICADO PERMANENTEMENTE
-      if (jogoJaNotificadoPermanente(appid)) {
-        console.log(`ℹ️ Jogo ${appid} já foi notificado em promoção anteriormente.`);
-        continue;
+      if (!jogoJaNotificadoPermanente(appid)) {
+        jogosNaoNotificados.push(appid);
       }
-      
-      const preco = await verificarPrecoJogo(appid);
-      
-      if (!preco) continue;
-      
-      const donos = await verificarJogoFamilia(appid);
-      
-      if (preco.emPromocao && donos.length === 0) {
-        if (!podeNotificarPromocao(steamId)) {
-          console.log(`ℹ️ Você já atingiu o limite de 2 promoções hoje.`);
-          break;
-        }
-        
-        const embed = new EmbedBuilder()
-          .setColor(0x00FF00)
-          .setTitle(`🎉 ${preco.nome} está em promoção!`)
-          .setURL(preco.link)
-          .setDescription(
-            `💸 **${preco.desconto}% de desconto!**\n\n` +
-            `💰 Preço antigo: ~~${preco.precoAntigo}~~\n` +
-            `💰 Preço atual: **${preco.precoAtual}**\n` +
-            `👤 Membro: ${mention}\n` +
-            `📢 **Ninguém na família possui este jogo!**\n\n` +
-            `🔗 **[Comprar na Steam](${preco.link})**`
-          )
-          .setThumbnail(`https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`)
-          .setFooter({ text: 'Steam Família - Promoções' })
-          .setTimestamp();
-        
-        await channelPromocoes.send({ 
-          content: `${mention} 🎮`,
-          embeds: [embed] 
-        });
-        
-        console.log(`✅ Promoção detectada: ${preco.nome} (${preco.desconto}%) para ${userName}`);
-        notificacoesEnviadas++;
-        
-        registrarNotificacaoPromocao(steamId);
-        registrarJogoNotificadoPermanente(appid, preco.nome, steamId);
-      }
-      
-      await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
-    if (notificacoesEnviadas === 0) {
-      console.log(`ℹ️ Nenhuma promoção nova encontrada para ${userName} hoje.`);
-    } else {
-      console.log(`✅ ${notificacoesEnviadas} promoções notificadas para ${userName}`);
+    console.log(`📊 ${jogosNaoNotificados.length} jogos ainda não foram notificados`);
+    
+    if (jogosNaoNotificados.length === 0) {
+      console.log(`✅ Todos os jogos da lista de desejos já foram notificados!`);
+      await channelPromocoes.send(`📢 **${mention}**, todos os jogos da sua lista de desejos já foram notificados em promoção!`);
+      return;
+    }
+    
+    // 🔹 VERIFICA QUAIS JOGOS ESTÃO EM PROMOÇÃO
+    const jogosEmPromocao = [];
+    for (const appid of jogosNaoNotificados) {
+      const preco = await verificarPrecoJogo(appid);
+      if (preco && preco.emPromocao) {
+        const donos = await verificarJogoFamilia(appid);
+        if (donos.length === 0) {
+          jogosEmPromocao.push({
+            appid: appid,
+            preco: preco,
+            nome: preco.nome,
+            desconto: preco.desconto,
+            link: preco.link,
+            precoAtual: preco.precoAtual,
+            precoAntigo: preco.precoAntigo
+          });
+        }
+      }
+    }
+    
+    console.log(`📊 ${jogosEmPromocao.length} jogos em promoção e não notificados`);
+    
+    if (jogosEmPromocao.length === 0) {
+      console.log(`ℹ️ Nenhum jogo em promoção no momento.`);
+      return;
+    }
+    
+    // 🔹 PEGA APENAS 2 JOGOS
+    const jogosParaNotificar = jogosEmPromocao.slice(0, 2);
+    
+    console.log(`🎯 Vou notificar ${jogosParaNotificar.length} promoções hoje:`);
+    jogosParaNotificar.forEach(j => console.log(`   - ${j.nome} (${j.desconto}% OFF)`));
+    
+    // 🔹 ENVIA AS NOTIFICAÇÕES
+    for (const jogo of jogosParaNotificar) {
+      const embed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle(`🎉 ${jogo.nome} está em promoção!`)
+        .setURL(jogo.link)
+        .setDescription(
+          `💸 **${jogo.desconto}% de desconto!**\n\n` +
+          `💰 Preço antigo: ~~${jogo.precoAntigo}~~\n` +
+          `💰 Preço atual: **${jogo.precoAtual}**\n` +
+          `👤 Membro: ${mention}\n` +
+          `📢 **Ninguém na família possui este jogo!**\n\n` +
+          `🔗 **[Comprar na Steam](${jogo.link})**`
+        )
+        .setThumbnail(`https://cdn.cloudflare.steamstatic.com/steam/apps/${jogo.appid}/header.jpg`)
+        .setFooter({ text: `Steam Família - Promoções Diárias` })
+        .setTimestamp();
+      
+      await channelPromocoes.send({ 
+        content: `${mention} 🎮`,
+        embeds: [embed] 
+      });
+      
+      registrarJogoNotificadoPermanente(jogo.appid, jogo.nome, steamId);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    // 🔹 SALVA A DATA DA ÚLTIMA NOTIFICAÇÃO
+    db.ultimaNotificacaoPromocao = {
+      data: hoje,
+      steamId: steamId,
+      quantidade: jogosParaNotificar.length
+    };
+    salvarDB(db);
+    
+    console.log(`✅ ${jogosParaNotificar.length} promoções notificadas para ${userName}`);
+    
+    const restantes = jogosNaoNotificados.length - jogosParaNotificar.length;
+    if (restantes > 0) {
+      await channelPromocoes.send(`📊 **${mention}**, restam **${restantes}** jogos da sua lista de desejos para serem notificados em promoção.`);
     }
     
   } catch (error) {
@@ -1127,7 +1088,7 @@ async function verificarJogosCompradosFamiliaQuero() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogosNaoLancadosQuero (ATUALIZADA)
+// 🔹 FUNÇÃO: verificarJogosNaoLancadosQuero
 // 🔹 ============================================
 async function verificarJogosNaoLancadosQuero() {
   console.log(`🔄 Verificando jogos não lançados da lista /quero...`);
@@ -1650,6 +1611,8 @@ async function checkSteamGames() {
       return;
     }
 
+    const isFirstRun = !primeiraVerificacaoConcluida;
+
     for (const trimmedId of steamIds) {
       try {
         const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${apiKey}&steamid=${trimmedId}&include_appinfo=true&format=json`;
@@ -1733,14 +1696,23 @@ async function checkSteamGames() {
       }
     }
 
+    // 🔹 SÓ EXECUTA A VERIFICAÇÃO DE PROMOÇÕES SE NÃO FOR A PRIMEIRA EXECUÇÃO
+    if (!isFirstRun) {
+      await verificarPromocoes();
+      await verificarPromocoesQuero();
+      await verificarJogosCompradosQuero();
+      await verificarJogosCompradosFamiliaQuero();
+      await verificarJogosNaoLancadosQuero();
+    } else {
+      console.log('⏳ Primeira execução: Pulando verificação de promoções para evitar notificações duplicadas.');
+    }
+
     if (!primeiraVerificacaoConcluida) {
       primeiraVerificacaoConcluida = true;
       console.log('✅ PRIMEIRA VERIFICAÇÃO CONCLUÍDA!');
       console.log('🔍 Monitorando NOVAS conquistas em tempo real!');
       salvarDB(db);
       console.log('✅ SISTEMA INICIALIZADO! Conquistas salvas. Monitorando novas conquistas!');
-      
-      await verificarPromocoes();
     }
 
     const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
@@ -2287,11 +2259,6 @@ client.once('ready', async () => {
   setInterval(async () => {
     try {
       await checkSteamGames();
-      await verificarPromocoes();
-      await verificarPromocoesQuero();
-      await verificarJogosCompradosQuero();
-      await verificarJogosCompradosFamiliaQuero();
-      await verificarJogosNaoLancadosQuero();
     } catch (error) {
       console.error('❌ Erro no intervalo:', error);
     }
