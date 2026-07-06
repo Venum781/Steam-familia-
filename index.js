@@ -8,7 +8,8 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 // ============================
 // CONFIGURAÇÕES
 // ============================
-const INTERVALO_VERIFICACAO = 30 * 1000;
+const INTERVALO_VERIFICACAO = 30 * 1000; // verificação de conquistas e jogos novos
+const INTERVALO_PROMOCOES = 60 * 60 * 1000; // 1 hora – verificação de promoções
 const MAX_RETRIES = 2;
 const REQUEST_TIMEOUT = 8000;
 const MAX_JOGOS_POR_USUARIO = 5;
@@ -74,10 +75,12 @@ function carregarDB() {
             if (!parsed.listaQuero) parsed.listaQuero = {};
             if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
             if (!parsed.ultimoRankingEnviado) parsed.ultimoRankingEnviado = {};
+            // 🔹 novo campo: últimas notificações de promoção (para não repetir)
+            if (!parsed.ultimasNotificacoesPromocao) parsed.ultimasNotificacoesPromocao = {};
             return parsed;
         }
     } catch (e) { console.error('Erro ao carregar banco:', e); }
-    return { ranking: {}, conquistas: {}, jogosRecentes: {}, steamLinks: {}, jogosSemConquistas: {}, listaQuero: {}, ultimaMensagemRankingId: null, ultimoRankingEnviado: {} };
+    return { ranking: {}, conquistas: {}, jogosRecentes: {}, steamLinks: {}, jogosSemConquistas: {}, listaQuero: {}, ultimaMensagemRankingId: null, ultimoRankingEnviado: {}, ultimasNotificacoesPromocao: {} };
 }
 
 function salvarDB(db) {
@@ -196,22 +199,56 @@ async function getAchievementIcon(appid, apiname) {
     } catch (e) { return null; }
 }
 
-// 🔹 BUSCA JOGO COM DETALHES COMPLETOS (CAPA, DESCRIÇÃO, DATA DE LANÇAMENTO)
-async function buscarJogoCompleto(nome) {
+// 🔹 EXTRAI APPID DE UM LINK DA STEAM
+function extrairAppIdDoLink(url) {
+    const match = url.match(/store\.steampowered\.com\/app\/(\d+)/);
+    return match ? parseInt(match[1]) : null;
+}
+
+// 🔹 BUSCA JOGO POR APPID (DIRETO)
+async function buscarJogoPorAppId(appid) {
     try {
-        // 1. Busca pelo nome
-        const searchUrl = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(nome)}&l=portuguese&cc=BR&max=1`;
+        const detailsUrl = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
+        const data = await fetchWithTimeout(detailsUrl, 5000);
+        if (!data[appid]?.success) return null;
+        const info = data[appid].data;
+        return {
+            appid: appid,
+            nome: info.name,
+            url: `https://store.steampowered.com/app/${appid}`,
+            capa: info.header_image || info.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
+            descricao: info.short_description || info.about_the_game?.substring(0, 200) || null,
+            dataLancamento: info.release_date?.date || null,
+            generos: info.genres?.map(g => g.description).join(', ') || null,
+            desenvolvedor: info.developers?.join(', ') || null
+        };
+    } catch (e) {
+        console.error(`❌ Erro ao buscar jogo por AppID ${appid}:`, e.message);
+        return null;
+    }
+}
+
+// 🔹 BUSCA JOGO COMPLETO (ACEITA NOME OU LINK)
+async function buscarJogoCompleto(input) {
+    // Se for um link, extrai o appid
+    const appidFromLink = extrairAppIdDoLink(input);
+    if (appidFromLink) {
+        return await buscarJogoPorAppId(appidFromLink);
+    }
+
+    // Caso contrário, busca pelo nome
+    try {
+        const searchUrl = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(input)}&l=portuguese&cc=BR&max=1`;
         const searchData = await fetchWithTimeout(searchUrl, 5000);
         if (!searchData.items?.length) return null;
 
         const jogo = searchData.items[0];
         const appid = jogo.id;
 
-        // 2. Busca detalhes completos
+        // Busca detalhes completos
         const detailsUrl = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
         const detailsData = await fetchWithTimeout(detailsUrl, 5000);
         if (!detailsData[appid]?.success) {
-            // Fallback com dados mínimos
             return {
                 appid: appid,
                 nome: jogo.name,
@@ -224,17 +261,13 @@ async function buscarJogoCompleto(nome) {
         }
 
         const data = detailsData[appid].data;
-        const capa = data.header_image || data.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`;
-        const descricao = data.short_description || data.about_the_game?.substring(0, 200) || null;
-        const dataLancamento = data.release_date?.date || null;
-
         return {
             appid: appid,
             nome: data.name || jogo.name,
             url: `https://store.steampowered.com/app/${appid}`,
-            capa: capa,
-            descricao: descricao,
-            dataLancamento: dataLancamento,
+            capa: data.header_image || data.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
+            descricao: data.short_description || data.about_the_game?.substring(0, 200) || null,
+            dataLancamento: data.release_date?.date || null,
             generos: data.genres?.map(g => g.description).join(', ') || null,
             desenvolvedor: data.developers?.join(', ') || null
         };
@@ -244,17 +277,36 @@ async function buscarJogoCompleto(nome) {
     }
 }
 
-// Versão simplificada (apenas nome, appid, url, capa) para autocomplete e outras funções
+// Versão simplificada para compatibilidade com outras funções
 async function buscarJogoSteam(nome) {
     const completo = await buscarJogoCompleto(nome);
     if (!completo) return null;
-    // Retorna apenas os campos essenciais para compatibilidade com outras partes do código
     return {
         appid: completo.appid,
         nome: completo.nome,
         url: completo.url,
         capa: completo.capa
     };
+}
+
+// 🔹 VERIFICA PREÇO DO JOGO (RETORNA OBJETO COM PROMOÇÃO)
+async function verificarPrecoJogo(appid) {
+    try {
+        const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=br`;
+        const data = await fetchWithTimeout(url, 5000);
+        if (!data[appid]?.success) return null;
+        const price = data[appid].data.price_overview;
+        if (!price) return null;
+        return {
+            precoAtual: price.final_formatted,
+            precoAntigo: price.initial_formatted,
+            emPromocao: price.final < price.initial,
+            desconto: price.discount_percent || 0
+        };
+    } catch (e) {
+        console.error(`❌ Erro ao verificar preço ${appid}:`, e.message);
+        return null;
+    }
 }
 
 async function verificarJogoFamilia(appid) {
@@ -408,6 +460,68 @@ async function enviarRanking(forcar = false) {
 }
 
 // ============================
+// VERIFICAÇÃO DE PROMOÇÕES DA LISTA /QUERO
+// ============================
+async function verificarPromocoesQuero() {
+    console.log('🔄 Verificando promoções da lista /quero...');
+    const agora = Date.now();
+    const hoje = new Date().toLocaleDateString('pt-BR');
+
+    for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
+        if (!jogos?.length) continue;
+        const usuario = await client.users.fetch(discordId).catch(() => null);
+        if (!usuario) continue;
+
+        for (const jogo of jogos) {
+            const appid = jogo.appid;
+            const preco = await verificarPrecoJogo(appid);
+            if (!preco) continue;
+
+            // Se estiver em promoção
+            if (preco.emPromocao) {
+                const chaveNotif = `promocao_${discordId}_${appid}`;
+                // Verifica se já notificou esta promoção (para não repetir)
+                const ultimaNotif = db.ultimasNotificacoesPromocao?.[chaveNotif];
+                if (ultimaNotif && ultimaNotif.data === hoje && ultimaNotif.preco === preco.precoAtual) {
+                    continue; // já notificou hoje com o mesmo preço
+                }
+
+                // Envia DM
+                try {
+                    const embed = new EmbedBuilder()
+                        .setColor(0x00FF00)
+                        .setTitle(`🎉 ${jogo.nome} está em promoção!`)
+                        .setURL(jogo.link)
+                        .setDescription(
+                            `**${preco.desconto}% de desconto!**\n\n` +
+                            `💰 Preço antigo: ~~${preco.precoAntigo}~~\n` +
+                            `💰 Preço atual: **${preco.precoAtual}**\n\n` +
+                            `🔗 **[Comprar na Steam](${jogo.link})**`
+                        )
+                        .setThumbnail(`https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`)
+                        .setFooter({ text: 'Steam Família - Promoção /quero' })
+                        .setTimestamp();
+
+                    await usuario.send({ embeds: [embed] });
+                    console.log(`✅ Promoção notificada para ${usuario.username}: ${jogo.nome}`);
+
+                    // Salva que já notificou
+                    if (!db.ultimasNotificacoesPromocao) db.ultimasNotificacoesPromocao = {};
+                    db.ultimasNotificacoesPromocao[chaveNotif] = {
+                        data: hoje,
+                        preco: preco.precoAtual,
+                        timestamp: agora
+                    };
+                    salvarDB(db);
+                } catch (e) {
+                    console.error(`❌ Erro ao enviar DM para ${usuario.username}:`, e.message);
+                }
+            }
+        }
+    }
+}
+
+// ============================
 // LOOP PRINCIPAL
 // ============================
 async function checkSteamGames() {
@@ -454,6 +568,7 @@ async function checkSteamGames() {
             }
         }
 
+        // Verifica compras da lista /quero (remove se o usuário ou alguém da família comprou)
         await verificarJogosCompradosQuero();
         await verificarJogosCompradosFamiliaQuero();
 
@@ -466,7 +581,7 @@ async function checkSteamGames() {
 }
 
 // ============================
-// /QUERO - COMPRAS
+// /QUERO - COMPRAS (REMOVE SE COMPRADO)
 // ============================
 async function verificarJogosCompradosQuero() {
     for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
@@ -543,7 +658,7 @@ async function registrarComandos() {
         await client.application.commands.set([
             { name: 'tem', description: 'Verifica se um jogo está na família', options: [{ name: 'jogo', type: 3, required: true, autocomplete: true, description: 'Nome ou link do jogo' }] },
             { name: 'ranking', description: 'Mostra o ranking da família' },
-            { name: 'quero', description: 'Adiciona um jogo à sua lista /quero', options: [{ name: 'jogo', type: 3, required: true, description: 'Nome do jogo' }] },
+            { name: 'quero', description: 'Adiciona um jogo à sua lista /quero', options: [{ name: 'jogo', type: 3, required: true, description: 'Nome ou link do jogo' }] },
             { name: 'quero-listar', description: 'Lista seus jogos /quero' },
             { name: 'quero-remover', description: 'Remove um jogo da lista /quero', options: [{ name: 'jogo', type: 3, required: true, description: 'Nome do jogo' }] },
             { name: 'dbstatus', description: '[DONO] Status do banco' }
@@ -596,47 +711,85 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // ============================
-    // /quero - CORRIGIDO (COM TRY-CATCH E FALLBACKS)
+    // /quero - COM SUPORTE A LINKS E VERIFICAÇÃO DE PROMOÇÃO
     // ============================
     if (interaction.commandName === 'quero') {
         await interaction.deferReply({ ephemeral: true });
         try {
-            const nome = interaction.options.getString('jogo');
+            const input = interaction.options.getString('jogo');
 
-            const jogo = await buscarJogoCompleto(nome);
+            const jogo = await buscarJogoCompleto(input);
             if (!jogo) {
-                return interaction.editReply('❌ Jogo não encontrado.');
+                return interaction.editReply('❌ Jogo não encontrado. Verifique o nome ou link.');
             }
 
+            // Verifica se já está na lista pessoal
             if (!db.listaQuero[interaction.user.id]) db.listaQuero[interaction.user.id] = [];
             if (db.listaQuero[interaction.user.id].some(j => j.appid === jogo.appid)) {
                 return interaction.editReply(`ℹ️ **${jogo.nome}** já está na sua lista /quero.`);
             }
 
+            // Verifica se alguém da família já possui
             const donos = await verificarJogoFamilia(jogo.appid);
             if (donos.length) {
                 const nomes = donos.map(d => d.discordId ? `<@${d.discordId}>` : d.nome).join(', ');
                 return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
             }
 
-            db.listaQuero[interaction.user.id].push({ appid: jogo.appid, nome: jogo.nome, link: jogo.url });
+            // 🔹 VERIFICA SE ESTÁ EM PROMOÇÃO NO MOMENTO
+            let promocaoMsg = '';
+            const preco = await verificarPrecoJogo(jogo.appid);
+            if (preco && preco.emPromocao) {
+                promocaoMsg = `🟢 **Este jogo está EM PROMOÇÃO agora!**\n` +
+                              `Desconto: **${preco.desconto}%**\n` +
+                              `Preço: ~~${preco.precoAntigo}~~ → **${preco.precoAtual}**\n\n`;
+            }
+
+            // Adiciona à lista
+            db.listaQuero[interaction.user.id].push({
+                appid: jogo.appid,
+                nome: jogo.nome,
+                link: jogo.url,
+                adicionado_em: new Date().toISOString()
+            });
             salvarDB(db);
 
+            // 🔹 MONTA O EMBED COM DETALHES E STATUS DA PROMOÇÃO
             const embed = new EmbedBuilder()
-                .setColor(0x00FF00)
-                .setTitle(`✅ ${jogo.nome || 'Jogo'}`)
-                .setURL(jogo.url || '#')
+                .setColor(preco?.emPromocao ? 0xFFA500 : 0x00FF00)
+                .setTitle(`✅ ${jogo.nome}`)
+                .setURL(jogo.url)
                 .setThumbnail(jogo.capa || null)
                 .setDescription(jogo.descricao || 'Sem descrição disponível.')
                 .addFields(
                     { name: '📅 Data de Lançamento', value: jogo.dataLancamento || 'Data não informada', inline: true },
-                    { name: '🎮 Gênero', value: jogo.generos || 'Não informado', inline: true }
+                    { name: '🎮 Gênero', value: jogo.generos || 'Não informado', inline: true },
+                    { name: '💰 Status', value: preco?.emPromocao ? `🟢 EM PROMOÇÃO (${preco.desconto}%)` : '⏳ Aguardando promoção', inline: true }
                 )
-                .setFooter({ text: 'Adicionado à sua lista /quero! Você será notificado(a) quando estiver disponível.' })
+                .setFooter({ text: 'Adicionado à sua lista /quero! Você será notificado(a) quando entrar em promoção.' })
                 .setTimestamp();
 
+            // Se estiver em promoção, adiciona uma mensagem extra no conteúdo
+            let content = `✅ **${jogo.nome}** adicionado à sua lista /quero!`;
+            if (preco?.emPromocao) {
+                content += `\n\n🟢 **Este jogo está EM PROMOÇÃO AGORA!**\n` +
+                           `Desconto: **${preco.desconto}%**\n` +
+                           `Preço: ~~${preco.precoAntigo}~~ → **${preco.precoAtual}**\n` +
+                           `🔗 ${jogo.url}`;
+                // Já notifica a promoção imediatamente, sem esperar a verificação periódica
+                const chaveNotif = `promocao_${interaction.user.id}_${jogo.appid}`;
+                const hoje = new Date().toLocaleDateString('pt-BR');
+                if (!db.ultimasNotificacoesPromocao) db.ultimasNotificacoesPromocao = {};
+                db.ultimasNotificacoesPromocao[chaveNotif] = {
+                    data: hoje,
+                    preco: preco.precoAtual,
+                    timestamp: Date.now()
+                };
+                salvarDB(db);
+            }
+
             await interaction.editReply({
-                content: `✅ **${jogo.nome}** adicionado à sua lista /quero!`,
+                content: content,
                 embeds: [embed]
             });
         } catch (error) {
@@ -663,8 +816,9 @@ client.on('interactionCreate', async (interaction) => {
     // ============================
     if (interaction.commandName === 'quero-remover') {
         await interaction.deferReply({ ephemeral: true });
-        const nome = interaction.options.getString('jogo');
-        const jogo = await buscarJogoSteam(nome);
+        const input = interaction.options.getString('jogo');
+        // Permite remover por nome ou link
+        const jogo = await buscarJogoSteam(input);
         if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
         const lista = db.listaQuero[interaction.user.id] || [];
         const idx = lista.findIndex(j => j.appid === jogo.appid);
@@ -811,9 +965,10 @@ client.once('clientReady', async () => {
 
     try {
         const dono = await client.users.fetch(DONO_ID);
-        if (dono) await dono.send('🚀 Bot Steam Família online! (comando /quero corrigido)');
+        if (dono) await dono.send('🚀 Bot Steam Família online! (com /quero aprimorado)');
     } catch (e) {}
 
+    // Inicia o loop principal
     setImmediate(async () => {
         console.log('🎮 Iniciando verificação...');
         await checkSteamGames();
@@ -822,6 +977,16 @@ client.once('clientReady', async () => {
     setInterval(async () => {
         try { await checkSteamGames(); } catch (e) { console.error('Erro no intervalo:', e); }
     }, INTERVALO_VERIFICACAO);
+
+    // 🔹 Intervalo para verificar promoções da lista /quero (a cada 1 hora)
+    setInterval(async () => {
+        try { await verificarPromocoesQuero(); } catch (e) { console.error('Erro ao verificar promoções:', e); }
+    }, INTERVALO_PROMOCOES);
+
+    // Executa a primeira verificação de promoções após 5 minutos
+    setTimeout(async () => {
+        await verificarPromocoesQuero();
+    }, 5 * 60 * 1000);
 });
 
 // ============================
@@ -830,4 +995,3 @@ client.once('clientReady', async () => {
 client.login(process.env.DISCORD_TOKEN)
     .then(() => console.log('🔑 Login realizado'))
     .catch(e => { console.error('❌ Erro ao login:', e); process.exit(1); });
-    
