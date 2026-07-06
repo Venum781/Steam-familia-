@@ -9,8 +9,8 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 // CONFIGURAÇÕES
 // ============================
 const INTERVALO_VERIFICACAO = 30 * 1000;
-const INTERVALO_PROMOCOES = 60 * 60 * 1000;   // 1 hora
-const INTERVALO_LANCAMENTOS = 6 * 60 * 60 * 1000; // 6 horas (para não sobrecarregar)
+const INTERVALO_PROMOCOES = 60 * 60 * 1000;
+const INTERVALO_LANCAMENTOS = 6 * 60 * 60 * 1000;
 const MAX_RETRIES = 2;
 const REQUEST_TIMEOUT = 8000;
 const MAX_JOGOS_POR_USUARIO = 5;
@@ -31,10 +31,10 @@ const rateLimiter = {
 };
 
 // ============================
-// IDs E MAPEAMENTO
+// IDs E MAPEAMENTO (ATUALIZADOS)
 // ============================
 const CHANNEL_NOTIFICACOES = process.env.CHANNEL_ID;
-const CHANNEL_RANKING = "1523067407474757672";
+const CHANNEL_RANKING = "1523797806324777161";
 const CHANNEL_CONQUISTAS = "1523080625802711150";
 const DONO_ID = "336204841972137995";
 
@@ -102,9 +102,26 @@ const rankingPadrao = {
     "76561198110004039": { nome: "Venum", jogos: 8, steamId: "76561198110004039", discordId: "336204841972137995" }
 };
 
-let ranking = db.ranking && Object.keys(db.ranking).length ? db.ranking : JSON.parse(JSON.stringify(rankingPadrao));
-db.ranking = ranking;
-salvarDB(db);
+function carregarRanking() {
+    if (db.ranking && Object.keys(db.ranking).length > 0) {
+        ranking = db.ranking;
+        for (const [steamId, dados] of Object.entries(rankingPadrao)) {
+            if (!ranking[steamId]) {
+                ranking[steamId] = dados;
+                console.log(`📊 Adicionando novo usuário ao ranking: ${dados.nome}`);
+            }
+        }
+        console.log(`📊 Ranking carregado do banco de dados: ${Object.keys(ranking).length} usuários`);
+    } else {
+        console.log('📊 Nenhum ranking salvo. Usando padrão.');
+        ranking = JSON.parse(JSON.stringify(rankingPadrao));
+        db.ranking = ranking;
+        salvarDB(db);
+    }
+}
+
+let ranking = {};
+carregarRanking();
 
 let ultimaMensagemRankingId = db.ultimaMensagemRankingId || null;
 let primeiraVerificacaoConcluida = false;
@@ -461,17 +478,14 @@ async function verificarLancamentosQuero() {
 
         for (const jogo of jogos) {
             const appid = jogo.appid;
-            // Busca informações atualizadas do jogo
             const info = await buscarJogoPorAppId(appid);
             if (!info) continue;
 
-            // Se já foi lançado e tem preço (disponível para compra)
             if (info.jaLancado && info.temPreco) {
                 const chaveNotif = `lancamento_${discordId}_${appid}`;
                 const ultimaNotif = db.ultimasNotificacoesLancamento?.[chaveNotif];
-                if (ultimaNotif) continue; // já notificou
+                if (ultimaNotif) continue;
 
-                // Envia DM
                 try {
                     const embed = new EmbedBuilder()
                         .setColor(0x00FF00)
@@ -495,9 +509,6 @@ async function verificarLancamentosQuero() {
                         timestamp: Date.now()
                     };
                     salvarDB(db);
-
-                    // Opcional: remove da lista após notificar? (ou mantém para promoções futuras)
-                    // Vamos manter para promoções.
                 } catch (e) {
                     console.error(`❌ Erro ao enviar DM para ${usuario.username}:`, e.message);
                 }
@@ -763,23 +774,17 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
             }
 
-            // Verifica preço e lançamento
             const preco = await verificarPrecoJogo(jogo.appid);
             let statusMsg = '⏳ Aguardando lançamento';
-            let statusEmoji = '🔵';
             if (jogo.jaLancado && jogo.temPreco) {
                 statusMsg = '🟢 JÁ LANÇADO – Disponível para compra!';
-                statusEmoji = '🟢';
-                if (preco?.emPromocao) {
-                    statusMsg += ` (${preco.desconto}% OFF!)`;
-                }
+                if (preco?.emPromocao) statusMsg += ` (${preco.desconto}% OFF!)`;
             } else if (jogo.jaLancado && !jogo.temPreco) {
                 statusMsg = '🟡 Lançado, mas sem preço (possível gratuito ou ainda não disponível)';
             } else {
                 statusMsg = `⏳ Lançamento previsto: ${jogo.dataLancamento || 'Data não informada'}`;
             }
 
-            // Adiciona à lista
             db.listaQuero[interaction.user.id].push({
                 appid: jogo.appid,
                 nome: jogo.nome,
@@ -788,7 +793,6 @@ client.on('interactionCreate', async (interaction) => {
             });
             salvarDB(db);
 
-            // Se já estiver lançado, já notifica o lançamento agora (para não perder)
             if (jogo.jaLancado && jogo.temPreco) {
                 const chaveNotif = `lancamento_${interaction.user.id}_${jogo.appid}`;
                 if (!db.ultimasNotificacoesLancamento) db.ultimasNotificacoesLancamento = {};
@@ -799,7 +803,6 @@ client.on('interactionCreate', async (interaction) => {
                         timestamp: Date.now()
                     };
                     salvarDB(db);
-                    // Envia DM avisando que já está disponível
                     try {
                         const embedLanc = new EmbedBuilder()
                             .setColor(0x00FF00)
@@ -819,7 +822,6 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            // Embed de confirmação
             const embed = new EmbedBuilder()
                 .setColor(jogo.jaLancado && jogo.temPreco ? 0x00FF00 : 0x00AE86)
                 .setTitle(`✅ ${jogo.nome}`)
@@ -1031,7 +1033,7 @@ client.once('clientReady', async () => {
 
     try {
         const dono = await client.users.fetch(DONO_ID);
-        if (dono) await dono.send('🚀 Bot Steam Família online! (com notificações de lançamento)');
+        if (dono) await dono.send('🚀 Bot Steam Família online! (IDs atualizados)');
     } catch (e) {}
 
     setImmediate(async () => {
@@ -1043,22 +1045,18 @@ client.once('clientReady', async () => {
         try { await checkSteamGames(); } catch (e) { console.error('Erro no intervalo:', e); }
     }, INTERVALO_VERIFICACAO);
 
-    // Verificação de promoções (1h)
     setInterval(async () => {
         try { await verificarPromocoesQuero(); } catch (e) { console.error('Erro ao verificar promoções:', e); }
     }, INTERVALO_PROMOCOES);
 
-    // Verificação de lançamentos (6h)
     setInterval(async () => {
         try { await verificarLancamentosQuero(); } catch (e) { console.error('Erro ao verificar lançamentos:', e); }
     }, INTERVALO_LANCAMENTOS);
 
-    // Executa uma verificação de lançamentos após 2 minutos
     setTimeout(async () => {
         await verificarLancamentosQuero();
     }, 2 * 60 * 1000);
 
-    // E uma verificação de promoções após 5 minutos
     setTimeout(async () => {
         await verificarPromocoesQuero();
     }, 5 * 60 * 1000);
