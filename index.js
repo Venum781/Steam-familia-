@@ -107,12 +107,13 @@ function carregarDB() {
       if (!parsed.steamLinks) parsed.steamLinks = {};
       if (!parsed.jogosNotificados) parsed.jogosNotificados = {};
       if (!parsed.listaQuero) parsed.listaQuero = {};
+      if (!parsed.jogosNotificadosPermanentes) parsed.jogosNotificadosPermanentes = {};
       return parsed;
     }
   } catch (error) {
     console.error('❌ Erro ao carregar banco:', error);
   }
-  return { conquistas: {}, jogosRecentes: {}, ranking: {}, promocoes: {}, steamLinks: {}, jogosNotificados: {}, listaQuero: {} };
+  return { conquistas: {}, jogosRecentes: {}, ranking: {}, promocoes: {}, steamLinks: {}, jogosNotificados: {}, listaQuero: {}, jogosNotificadosPermanentes: {} };
 }
 
 function salvarDB(db) {
@@ -132,6 +133,7 @@ if (!db.promocoes) db.promocoes = {};
 if (!db.steamLinks) db.steamLinks = {};
 if (!db.jogosNotificados) db.jogosNotificados = {};
 if (!db.listaQuero) db.listaQuero = {};
+if (!db.jogosNotificadosPermanentes) db.jogosNotificadosPermanentes = {};
 
 // 🔹 ============================================
 // 🔹 RANKING (COM PERSISTÊNCIA CORRIGIDA)
@@ -568,6 +570,40 @@ function listarQuero(discordId) {
 }
 
 // 🔹 ============================================
+// 🔹 FUNÇÃO: jogoJaNotificadoPermanente (NOVA)
+// 🔹 ============================================
+function jogoJaNotificadoPermanente(appid) {
+  if (!db.jogosNotificadosPermanentes) {
+    db.jogosNotificadosPermanentes = {};
+  }
+  
+  if (db.jogosNotificadosPermanentes[appid]) {
+    return true;
+  }
+  
+  return false;
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: registrarJogoNotificadoPermanente (NOVA)
+// 🔹 ============================================
+function registrarJogoNotificadoPermanente(appid, nomeJogo, steamId) {
+  if (!db.jogosNotificadosPermanentes) {
+    db.jogosNotificadosPermanentes = {};
+  }
+  
+  db.jogosNotificadosPermanentes[appid] = {
+    nome: nomeJogo,
+    appid: appid,
+    data: new Date().toISOString(),
+    steamId: steamId || 'todos'
+  };
+  
+  salvarDB(db);
+  console.log(`💾 Jogo ${nomeJogo} (${appid}) registrado como notificado permanentemente`);
+}
+
+// 🔹 ============================================
 // 🔹 FUNÇÃO: verificarListaDesejosComprados
 // 🔹 ============================================
 async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorSteamId, compradorNome) {
@@ -686,7 +722,7 @@ function registrarJogoNotificado(steamId, appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoes (AUTOMÁTICA)
+// 🔹 FUNÇÃO: verificarPromocoes (ATUALIZADA)
 // 🔹 ============================================
 async function verificarPromocoes() {
   console.log(`🔄 Verificando promoções automaticamente...`);
@@ -716,8 +752,8 @@ async function verificarPromocoes() {
     let notificacoesEnviadas = 0;
     
     for (const appid of listaEmbaralhada) {
-      if (jogoJaNotificado(steamId, appid)) {
-        console.log(`ℹ️ Jogo ${appid} já foi notificado hoje.`);
+      if (jogoJaNotificadoPermanente(appid)) {
+        console.log(`ℹ️ Jogo ${appid} já foi notificado em promoção anteriormente.`);
         continue;
       }
       
@@ -758,7 +794,8 @@ async function verificarPromocoes() {
         notificacoesEnviadas++;
         
         registrarNotificacaoPromocao(steamId);
-        registrarJogoNotificado(steamId, appid);
+        registrarJogoNotificado(appid, steamId);
+        registrarJogoNotificadoPermanente(appid, preco.nome, steamId);
       }
       
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -776,7 +813,7 @@ async function verificarPromocoes() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoesQuero
+// 🔹 FUNÇÃO: verificarPromocoesQuero (ATUALIZADA)
 // 🔹 ============================================
 async function verificarPromocoesQuero() {
   console.log(`🔄 Verificando promoções da lista /quero...`);
@@ -789,6 +826,11 @@ async function verificarPromocoesQuero() {
       if (!usuario) continue;
       
       for (const jogo of jogos) {
+        if (jogoJaNotificadoPermanente(jogo.appid)) {
+          console.log(`ℹ️ Jogo ${jogo.appid} (${jogo.nome}) já foi notificado anteriormente.`);
+          continue;
+        }
+        
         const preco = await verificarPrecoJogo(jogo.appid);
         if (!preco) continue;
         
@@ -825,6 +867,8 @@ async function verificarPromocoesQuero() {
             console.log(`✅ DM enviada para ${usuario.username}: ${preco.nome} em promoção!`);
             
             db.jogosNotificados[chaveNotificacao][hoje] = true;
+            registrarJogoNotificadoPermanente(jogo.appid, preco.nome, discordId);
+            
             salvarDB(db);
           } catch (error) {
             console.error(`❌ Erro ao enviar DM para ${usuario.username}:`, error.message);
@@ -981,6 +1025,11 @@ async function verificarJogosNaoLancadosQuero() {
       if (!usuario) continue;
       
       for (const jogo of jogos) {
+        if (jogoJaNotificadoPermanente(jogo.appid)) {
+          console.log(`ℹ️ Jogo ${jogo.appid} (${jogo.nome}) já foi notificado anteriormente.`);
+          continue;
+        }
+        
         const info = await verificarDisponibilidadeJogo(jogo.appid);
         if (!info) continue;
         
@@ -1020,6 +1069,8 @@ async function verificarJogosNaoLancadosQuero() {
             removerQuero(discordId, jogo.appid);
             
             db.jogosNotificados[chaveNotificacao][hoje] = true;
+            registrarJogoNotificadoPermanente(jogo.appid, info.nome, discordId);
+            
             salvarDB(db);
           } catch (error) {
             console.error(`❌ Erro ao enviar DM para ${usuario.username}:`, error.message);
@@ -1819,7 +1870,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // 🔹 COMANDO /quero-listar
+  // 🔹 COMANDO /quero-listar (NOVO)
   if (interaction.isChatInputCommand() && interaction.commandName === 'quero-listar') {
     await interaction.deferReply({ ephemeral: true });
     
@@ -1833,37 +1884,60 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
       
-      let mensagem = `📋 **Sua lista /quero (${lista.length} jogos):**\n\n`;
+      const embed = new EmbedBuilder()
+        .setColor(0x00AE86)
+        .setTitle(`📋 Sua lista /quero (${lista.length} jogos)`)
+        .setDescription('Aqui estão todos os jogos que você está aguardando:')
+        .setFooter({ text: 'Steam Família - Lista /quero' })
+        .setTimestamp();
       
+      let descricao = '';
       for (let i = 0; i < lista.length; i++) {
         const jogo = lista[i];
         const preco = await verificarPrecoJogo(jogo.appid);
         const disponivel = await verificarDisponibilidadeJogo(jogo.appid);
+        
         let status = '⏳ Aguardando...';
+        let statusEmoji = '🟡';
         
         if (preco && preco.emPromocao) {
-          status = '🟢 EM PROMOÇÃO!';
+          status = `🟢 EM PROMOÇÃO! (${preco.desconto}% OFF)`;
+          statusEmoji = '🟢';
         } else if (disponivel && (disponivel.disponivel || disponivel.preVenda)) {
           status = '🟢 DISPONÍVEL!';
+          statusEmoji = '🟢';
+        } else if (disponivel && disponivel.aindaNaoLancado) {
+          status = `⏳ Lançamento: ${disponivel.dataLancamento}`;
+          statusEmoji = '🔵';
         }
         
-        mensagem += `**${i + 1}.** ${jogo.nome}\n`;
-        mensagem += `   🔗 ${jogo.link}\n`;
-        mensagem += `   📊 Status: ${status}\n\n`;
+        descricao += `${statusEmoji} **${i + 1}.** [${jogo.nome}](${jogo.link})\n`;
+        descricao += `   📊 Status: ${status}\n\n`;
       }
       
-      if (mensagem.length > 1900) {
-        mensagem = mensagem.substring(0, 1900) + '\n... (lista muito longa)';
+      if (descricao.length > 4000) {
+        const partes = descricao.match(/[\s\S]{1,4000}/g) || [];
+        await interaction.editReply({
+          content: `📋 **Sua lista /quero (${lista.length} jogos)**\n*(Lista muito longa, enviando em partes)*`
+        });
+        
+        for (const parte of partes) {
+          const embedParte = new EmbedBuilder()
+            .setColor(0x00AE86)
+            .setDescription(parte)
+            .setFooter({ text: 'Steam Família - Lista /quero' });
+          
+          await interaction.followUp({ embeds: [embedParte], ephemeral: true });
+        }
+      } else {
+        embed.setDescription(descricao);
+        await interaction.editReply({ embeds: [embed] });
       }
-      
-      await interaction.editReply({
-        content: mensagem
-      });
       
     } catch (error) {
       console.error('❌ Erro no comando /quero-listar:', error);
       await interaction.editReply({
-        content: '❌ Ocorreu um erro ao listar os jogos.'
+        content: '❌ Ocorreu um erro ao listar os jogos da sua lista /quero.'
       });
     }
   }
