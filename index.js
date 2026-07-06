@@ -9,7 +9,8 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 // CONFIGURAÇÕES
 // ============================
 const INTERVALO_VERIFICACAO = 30 * 1000;
-const INTERVALO_PROMOCOES = 60 * 60 * 1000;
+const INTERVALO_PROMOCOES = 60 * 60 * 1000;   // 1 hora
+const INTERVALO_LANCAMENTOS = 6 * 60 * 60 * 1000; // 6 horas (para não sobrecarregar)
 const MAX_RETRIES = 2;
 const REQUEST_TIMEOUT = 8000;
 const MAX_JOGOS_POR_USUARIO = 5;
@@ -54,7 +55,7 @@ const discordUsers = {
 };
 
 // ============================
-// BANCO DE DADOS (VOLUME PERSISTENTE)
+// BANCO DE DADOS
 // ============================
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
 const DB_FILE = path.join(DATA_DIR, 'steam_achievements_db.json');
@@ -76,10 +77,16 @@ function carregarDB() {
             if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
             if (!parsed.ultimoRankingEnviado) parsed.ultimoRankingEnviado = {};
             if (!parsed.ultimasNotificacoesPromocao) parsed.ultimasNotificacoesPromocao = {};
+            if (!parsed.ultimasNotificacoesLancamento) parsed.ultimasNotificacoesLancamento = {};
             return parsed;
         }
     } catch (e) { console.error('Erro ao carregar banco:', e); }
-    return { ranking: {}, conquistas: {}, jogosRecentes: {}, steamLinks: {}, jogosSemConquistas: {}, listaQuero: {}, ultimaMensagemRankingId: null, ultimoRankingEnviado: {}, ultimasNotificacoesPromocao: {} };
+    return { 
+        ranking: {}, conquistas: {}, jogosRecentes: {}, steamLinks: {}, 
+        jogosSemConquistas: {}, listaQuero: {}, 
+        ultimaMensagemRankingId: null, ultimoRankingEnviado: {},
+        ultimasNotificacoesPromocao: {}, ultimasNotificacoesLancamento: {} 
+    };
 }
 
 function salvarDB(db) {
@@ -157,15 +164,6 @@ async function getAchievements(steamId, appid) {
     }
 }
 
-async function getGameName(appid) {
-    try {
-        const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
-        const data = await fetchWithTimeout(url);
-        if (data[appid]?.success) return data[appid].data.name;
-    } catch (e) {}
-    return `Jogo ${appid}`;
-}
-
 async function getGameIcon(appid) {
     try {
         const url = `https://store.steampowered.com/api/appdetails?appids=${appid}`;
@@ -195,13 +193,11 @@ async function getAchievementIcon(appid, apiname) {
     } catch (e) { return null; }
 }
 
-// 🔹 EXTRAI APPID DE UM LINK DA STEAM
 function extrairAppIdDoLink(url) {
     const match = url.match(/store\.steampowered\.com\/app\/(\d+)/);
     return match ? parseInt(match[1]) : null;
 }
 
-// 🔹 BUSCA JOGO POR APPID (DIRETO)
 async function buscarJogoPorAppId(appid) {
     try {
         const detailsUrl = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
@@ -215,8 +211,10 @@ async function buscarJogoPorAppId(appid) {
             capa: info.header_image || info.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
             descricao: info.short_description || info.about_the_game?.substring(0, 200) || null,
             dataLancamento: info.release_date?.date || null,
+            jaLancado: info.release_date?.coming_soon === false,
             generos: info.genres?.map(g => g.description).join(', ') || null,
-            desenvolvedor: info.developers?.join(', ') || null
+            desenvolvedor: info.developers?.join(', ') || null,
+            temPreco: !!info.price_overview
         };
     } catch (e) {
         console.error(`❌ Erro ao buscar jogo por AppID ${appid}:`, e.message);
@@ -224,7 +222,6 @@ async function buscarJogoPorAppId(appid) {
     }
 }
 
-// 🔹 BUSCA JOGO COMPLETO (ACEITA NOME OU LINK)
 async function buscarJogoCompleto(input) {
     const appidFromLink = extrairAppIdDoLink(input);
     if (appidFromLink) {
@@ -248,7 +245,10 @@ async function buscarJogoCompleto(input) {
                 capa: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
                 descricao: null,
                 dataLancamento: null,
-                generos: null
+                jaLancado: false,
+                generos: null,
+                desenvolvedor: null,
+                temPreco: false
             };
         }
 
@@ -260,8 +260,10 @@ async function buscarJogoCompleto(input) {
             capa: data.header_image || data.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
             descricao: data.short_description || data.about_the_game?.substring(0, 200) || null,
             dataLancamento: data.release_date?.date || null,
+            jaLancado: data.release_date?.coming_soon === false,
             generos: data.genres?.map(g => g.description).join(', ') || null,
-            desenvolvedor: data.developers?.join(', ') || null
+            desenvolvedor: data.developers?.join(', ') || null,
+            temPreco: !!data.price_overview
         };
     } catch (error) {
         console.error('❌ Erro ao buscar jogo completo:', error.message);
@@ -280,7 +282,6 @@ async function buscarJogoSteam(nome) {
     };
 }
 
-// 🔹 VERIFICA PREÇO
 async function verificarPrecoJogo(appid) {
     try {
         const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=br`;
@@ -447,8 +448,64 @@ async function enviarRanking(forcar = false) {
 }
 
 // ============================
-// VERIFICAÇÃO DE PROMOÇÕES DA LISTA /QUERO
+// VERIFICAÇÃO DE LANÇAMENTOS E PROMOÇÕES
 // ============================
+async function verificarLancamentosQuero() {
+    console.log('🔄 Verificando lançamentos da lista /quero...');
+    const hoje = new Date().toLocaleDateString('pt-BR');
+
+    for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
+        if (!jogos?.length) continue;
+        const usuario = await client.users.fetch(discordId).catch(() => null);
+        if (!usuario) continue;
+
+        for (const jogo of jogos) {
+            const appid = jogo.appid;
+            // Busca informações atualizadas do jogo
+            const info = await buscarJogoPorAppId(appid);
+            if (!info) continue;
+
+            // Se já foi lançado e tem preço (disponível para compra)
+            if (info.jaLancado && info.temPreco) {
+                const chaveNotif = `lancamento_${discordId}_${appid}`;
+                const ultimaNotif = db.ultimasNotificacoesLancamento?.[chaveNotif];
+                if (ultimaNotif) continue; // já notificou
+
+                // Envia DM
+                try {
+                    const embed = new EmbedBuilder()
+                        .setColor(0x00FF00)
+                        .setTitle(`🎮 ${info.nome} já está disponível!`)
+                        .setURL(info.url)
+                        .setDescription(
+                            `**${info.nome}** foi lançado e já está disponível para compra na Steam!\n\n` +
+                            `📅 Data de lançamento: ${info.dataLancamento || 'Disponível agora'}\n` +
+                            `🔗 **[Comprar na Steam](${info.url})**`
+                        )
+                        .setThumbnail(info.capa || null)
+                        .setFooter({ text: 'Steam Família - Lançamento /quero' })
+                        .setTimestamp();
+
+                    await usuario.send({ embeds: [embed] });
+                    console.log(`✅ Lançamento notificado para ${usuario.username}: ${info.nome}`);
+
+                    if (!db.ultimasNotificacoesLancamento) db.ultimasNotificacoesLancamento = {};
+                    db.ultimasNotificacoesLancamento[chaveNotif] = {
+                        data: hoje,
+                        timestamp: Date.now()
+                    };
+                    salvarDB(db);
+
+                    // Opcional: remove da lista após notificar? (ou mantém para promoções futuras)
+                    // Vamos manter para promoções.
+                } catch (e) {
+                    console.error(`❌ Erro ao enviar DM para ${usuario.username}:`, e.message);
+                }
+            }
+        }
+    }
+}
+
 async function verificarPromocoesQuero() {
     console.log('🔄 Verificando promoções da lista /quero...');
     const hoje = new Date().toLocaleDateString('pt-BR');
@@ -706,14 +763,23 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
             }
 
-            let promocaoMsg = '';
+            // Verifica preço e lançamento
             const preco = await verificarPrecoJogo(jogo.appid);
-            if (preco && preco.emPromocao) {
-                promocaoMsg = `🟢 **Este jogo está EM PROMOÇÃO agora!**\n` +
-                              `Desconto: **${preco.desconto}%**\n` +
-                              `Preço: ~~${preco.precoAntigo}~~ → **${preco.precoAtual}**\n\n`;
+            let statusMsg = '⏳ Aguardando lançamento';
+            let statusEmoji = '🔵';
+            if (jogo.jaLancado && jogo.temPreco) {
+                statusMsg = '🟢 JÁ LANÇADO – Disponível para compra!';
+                statusEmoji = '🟢';
+                if (preco?.emPromocao) {
+                    statusMsg += ` (${preco.desconto}% OFF!)`;
+                }
+            } else if (jogo.jaLancado && !jogo.temPreco) {
+                statusMsg = '🟡 Lançado, mas sem preço (possível gratuito ou ainda não disponível)';
+            } else {
+                statusMsg = `⏳ Lançamento previsto: ${jogo.dataLancamento || 'Data não informada'}`;
             }
 
+            // Adiciona à lista
             db.listaQuero[interaction.user.id].push({
                 appid: jogo.appid,
                 nome: jogo.nome,
@@ -722,8 +788,40 @@ client.on('interactionCreate', async (interaction) => {
             });
             salvarDB(db);
 
+            // Se já estiver lançado, já notifica o lançamento agora (para não perder)
+            if (jogo.jaLancado && jogo.temPreco) {
+                const chaveNotif = `lancamento_${interaction.user.id}_${jogo.appid}`;
+                if (!db.ultimasNotificacoesLancamento) db.ultimasNotificacoesLancamento = {};
+                if (!db.ultimasNotificacoesLancamento[chaveNotif]) {
+                    const hoje = new Date().toLocaleDateString('pt-BR');
+                    db.ultimasNotificacoesLancamento[chaveNotif] = {
+                        data: hoje,
+                        timestamp: Date.now()
+                    };
+                    salvarDB(db);
+                    // Envia DM avisando que já está disponível
+                    try {
+                        const embedLanc = new EmbedBuilder()
+                            .setColor(0x00FF00)
+                            .setTitle(`🎮 ${jogo.nome} já está disponível!`)
+                            .setURL(jogo.url)
+                            .setDescription(
+                                `**${jogo.nome}** foi lançado e já está disponível para compra na Steam!\n\n` +
+                                `📅 Data de lançamento: ${jogo.dataLancamento || 'Disponível agora'}\n` +
+                                `🔗 **[Comprar na Steam](${jogo.url})**`
+                            )
+                            .setThumbnail(jogo.capa || null)
+                            .setFooter({ text: 'Steam Família - Lançamento /quero' })
+                            .setTimestamp();
+                        const usuario = await client.users.fetch(interaction.user.id);
+                        if (usuario) await usuario.send({ embeds: [embedLanc] });
+                    } catch (e) {}
+                }
+            }
+
+            // Embed de confirmação
             const embed = new EmbedBuilder()
-                .setColor(preco?.emPromocao ? 0xFFA500 : 0x00FF00)
+                .setColor(jogo.jaLancado && jogo.temPreco ? 0x00FF00 : 0x00AE86)
                 .setTitle(`✅ ${jogo.nome}`)
                 .setURL(jogo.url)
                 .setThumbnail(jogo.capa || null)
@@ -731,26 +829,14 @@ client.on('interactionCreate', async (interaction) => {
                 .addFields(
                     { name: '📅 Data de Lançamento', value: jogo.dataLancamento || 'Data não informada', inline: true },
                     { name: '🎮 Gênero', value: jogo.generos || 'Não informado', inline: true },
-                    { name: '💰 Status', value: preco?.emPromocao ? `🟢 EM PROMOÇÃO (${preco.desconto}%)` : '⏳ Aguardando promoção', inline: true }
+                    { name: '💰 Status', value: statusMsg, inline: true }
                 )
-                .setFooter({ text: 'Adicionado à sua lista /quero! Você será notificado(a) quando entrar em promoção.' })
+                .setFooter({ text: 'Adicionado à sua lista /quero! Você será notificado(a) quando o jogo for lançado ou entrar em promoção.' })
                 .setTimestamp();
 
             let content = `✅ **${jogo.nome}** adicionado à sua lista /quero!`;
-            if (preco?.emPromocao) {
-                content += `\n\n🟢 **Este jogo está EM PROMOÇÃO AGORA!**\n` +
-                           `Desconto: **${preco.desconto}%**\n` +
-                           `Preço: ~~${preco.precoAntigo}~~ → **${preco.precoAtual}**\n` +
-                           `🔗 ${jogo.url}`;
-                const chaveNotif = `promocao_${interaction.user.id}_${jogo.appid}`;
-                const hoje = new Date().toLocaleDateString('pt-BR');
-                if (!db.ultimasNotificacoesPromocao) db.ultimasNotificacoesPromocao = {};
-                db.ultimasNotificacoesPromocao[chaveNotif] = {
-                    data: hoje,
-                    preco: preco.precoAtual,
-                    timestamp: Date.now()
-                };
-                salvarDB(db);
+            if (jogo.jaLancado && jogo.temPreco) {
+                content += `\n\n🟢 **Este jogo já está disponível para compra!**\n🔗 ${jogo.url}`;
             }
 
             await interaction.editReply({ content, embeds: [embed] });
@@ -771,7 +857,7 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply({ embeds: [embed] });
     }
 
-    // /quero-remover - ACEITA NOME OU NÚMERO DA POSIÇÃO
+    // /quero-remover - ACEITA NOME OU NÚMERO
     if (interaction.commandName === 'quero-remover') {
         await interaction.deferReply({ ephemeral: true });
         const input = interaction.options.getString('jogo');
@@ -784,19 +870,16 @@ client.on('interactionCreate', async (interaction) => {
         let jogoRemovido = null;
         let idx = -1;
 
-        // Tenta interpretar como número (posição na lista)
         const posicao = parseInt(input);
         if (!isNaN(posicao) && posicao >= 1 && posicao <= lista.length) {
             idx = posicao - 1;
             jogoRemovido = lista[idx];
         } else {
-            // Se não for número, busca pelo nome
             const jogoBuscado = await buscarJogoSteam(input);
             if (jogoBuscado) {
                 idx = lista.findIndex(j => j.appid === jogoBuscado.appid);
                 if (idx !== -1) jogoRemovido = lista[idx];
             }
-            // Se não encontrar por appid, tenta comparar nomes (ignorando maiúsculas)
             if (idx === -1) {
                 idx = lista.findIndex(j => j.nome.toLowerCase() === input.toLowerCase());
                 if (idx !== -1) jogoRemovido = lista[idx];
@@ -948,7 +1031,7 @@ client.once('clientReady', async () => {
 
     try {
         const dono = await client.users.fetch(DONO_ID);
-        if (dono) await dono.send('🚀 Bot Steam Família online! (com /quero-remover por número)');
+        if (dono) await dono.send('🚀 Bot Steam Família online! (com notificações de lançamento)');
     } catch (e) {}
 
     setImmediate(async () => {
@@ -960,10 +1043,22 @@ client.once('clientReady', async () => {
         try { await checkSteamGames(); } catch (e) { console.error('Erro no intervalo:', e); }
     }, INTERVALO_VERIFICACAO);
 
+    // Verificação de promoções (1h)
     setInterval(async () => {
         try { await verificarPromocoesQuero(); } catch (e) { console.error('Erro ao verificar promoções:', e); }
     }, INTERVALO_PROMOCOES);
 
+    // Verificação de lançamentos (6h)
+    setInterval(async () => {
+        try { await verificarLancamentosQuero(); } catch (e) { console.error('Erro ao verificar lançamentos:', e); }
+    }, INTERVALO_LANCAMENTOS);
+
+    // Executa uma verificação de lançamentos após 2 minutos
+    setTimeout(async () => {
+        await verificarLancamentosQuero();
+    }, 2 * 60 * 1000);
+
+    // E uma verificação de promoções após 5 minutos
     setTimeout(async () => {
         await verificarPromocoesQuero();
     }, 5 * 60 * 1000);
