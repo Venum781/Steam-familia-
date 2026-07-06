@@ -13,8 +13,6 @@ const MAX_CONQUISTAS_POR_JOGO = 30;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 const REQUEST_TIMEOUT = 10000;
-const MAX_PROMOCOES_POR_MEMBRO = 1;
-const MAX_TENTATIVAS_POR_MEMBRO = 30;
 
 // 🔹 Rate Limiter
 class RateLimiter {
@@ -687,7 +685,7 @@ async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorStea
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoesTodosMembros (1 POR MEMBRO - ALEATÓRIO)
+// 🔹 FUNÇÃO: verificarPromocoesTodosMembros (PRIMEIRO JOGO DE CADA MEMBRO)
 // 🔹 ============================================
 async function verificarPromocoesTodosMembros() {
     console.log(`🔄 Verificando promoções para TODOS os membros...`);
@@ -724,7 +722,7 @@ async function verificarPromocoesTodosMembros() {
             return;
         }
 
-        // 🔹 Para cada membro, busca 1 jogo em promoção (ALEATÓRIO)
+        // 🔹 Para cada membro, busca o PRIMEIRO jogo em promoção
         const promocoesPorMembro = [];
 
         for (const [steamId, lista] of Object.entries(listasPorMembro)) {
@@ -734,7 +732,7 @@ async function verificarPromocoesTodosMembros() {
             
             console.log(`🔍 Buscando 1 promoção para ${nomeMembro}...`);
 
-            // 🔹 Filtra jogos não notificados deste membro
+            // 🔹 Filtra jogos já notificados (globalmente)
             const jogosNaoNotificados = [];
             for (const appid of lista) {
                 if (!jogoJaNotificadoPermanente(appid)) {
@@ -754,68 +752,52 @@ async function verificarPromocoesTodosMembros() {
                 [jogosEmbaralhados[i], jogosEmbaralhados[j]] = [jogosEmbaralhados[j], jogosEmbaralhados[i]];
             }
 
-            // 🔹 Verifica promoções (máximo de 30 tentativas aleatórias)
+            // 🔹 Verifica jogos UM POR UM até encontrar o PRIMEIRO em promoção
             let promocaoEncontrada = null;
-            const BATCH_SIZE = 5;
-            let tentativas = 0;
             
-            for (let i = 0; i < jogosEmbaralhados.length && !promocaoEncontrada && tentativas < MAX_TENTATIVAS_POR_MEMBRO; i += BATCH_SIZE) {
-                const batch = jogosEmbaralhados.slice(i, Math.min(i + BATCH_SIZE, jogosEmbaralhados.length));
-                tentativas += batch.length;
-                
-                const resultados = await Promise.all(
-                    batch.map(async (appid) => {
-                        try {
-                            const preco = await verificarPrecoJogo(appid);
-                            if (preco && preco.emPromocao) {
-                                const donos = await verificarJogoFamilia(appid);
-                                if (donos.length === 0) {
-                                    return {
-                                        appid: appid,
-                                        preco: preco,
-                                        nome: preco.nome,
-                                        desconto: preco.desconto,
-                                        link: preco.link,
-                                        precoAtual: preco.precoAtual,
-                                        precoAntigo: preco.precoAntigo,
-                                        membro: {
-                                            steamId: steamId,
-                                            nome: nomeMembro,
-                                            discordId: discordId,
-                                            mention: mention
-                                        }
-                                    };
+            for (const appid of jogosEmbaralhados) {
+                try {
+                    console.log(`   🔍 Verificando AppID: ${appid}...`);
+                    
+                    const preco = await verificarPrecoJogo(appid);
+                    if (preco && preco.emPromocao) {
+                        const donos = await verificarJogoFamilia(appid);
+                        if (donos.length === 0) {
+                            promocaoEncontrada = {
+                                appid: appid,
+                                preco: preco,
+                                nome: preco.nome,
+                                desconto: preco.desconto,
+                                link: preco.link,
+                                precoAtual: preco.precoAtual,
+                                precoAntigo: preco.precoAntigo,
+                                membro: {
+                                    steamId: steamId,
+                                    nome: nomeMembro,
+                                    discordId: discordId,
+                                    mention: mention
                                 }
-                            }
-                            return null;
-                        } catch (error) {
-                            console.error(`❌ Erro ao verificar jogo ${appid}:`, error.message);
-                            return null;
+                            };
+                            console.log(`   ✅ ${nomeMembro}: PRIMEIRO jogo em promoção encontrado! (${preco.nome})`);
+                            break; // 🔹 PARA IMEDIATAMENTE quando encontra
                         }
-                    })
-                );
-                
-                for (const resultado of resultados) {
-                    if (resultado && !promocaoEncontrada) {
-                        promocaoEncontrada = resultado;
-                        break;
                     }
+                } catch (error) {
+                    console.error(`   ❌ Erro ao verificar jogo ${appid}:`, error.message);
                 }
             }
 
             if (promocaoEncontrada) {
-                console.log(`✅ ${nomeMembro}: 1 promoção encontrada (${promocaoEncontrada.nome})`);
-                
                 // 🔹 Marca o jogo como notificado permanentemente
                 registrarJogoNotificadoPermanente(promocaoEncontrada.appid, promocaoEncontrada.nome, steamId);
-                
                 promocoesPorMembro.push(promocaoEncontrada);
+                console.log(`💾 ${nomeMembro}: Jogo ${promocaoEncontrada.nome} salvo como notificado`);
             } else {
                 console.log(`ℹ️ ${nomeMembro}: Nenhum jogo em promoção encontrado.`);
             }
         }
 
-        console.log(`📊 Total de promoções encontradas: ${promocoesPorMembro.length} (${promocoesPorMembro.length} membros)`);
+        console.log(`📊 Total de promoções encontradas: ${promocoesPorMembro.length}`);
 
         if (promocoesPorMembro.length === 0) {
             console.log(`ℹ️ Nenhum jogo em promoção para nenhum membro.`);
