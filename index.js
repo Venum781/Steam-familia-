@@ -162,6 +162,13 @@ async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) 
             throw new Error(`Rate limit excedido após ${MAX_RETRIES} tentativas`);
         }
         
+        if (response.status === 400) {
+            // 400 Bad Request é esperado para jogos sem conquistas públicas — não logar como erro
+            const err = new Error(`HTTP 400: ${response.statusText}`);
+            err.isHttp400 = true;
+            throw err;
+        }
+
         if (response.status >= 400) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -332,7 +339,10 @@ async function getAchievementName(steamId, appid, apiname) {
             }
         }
     } catch (error) {
-        console.error(`❌ Erro ao buscar nome da conquista:`, error.message);
+        // HTTP 400 é esperado para jogos sem conquistas públicas — tratar silenciosamente
+        if (!error.isHttp400 && !(error.message && error.message.includes('HTTP 400'))) {
+            console.error(`❌ Erro ao buscar nome da conquista:`, error.message);
+        }
     }
     return apiname;
 }
@@ -344,12 +354,11 @@ async function getAchievements(steamId, appid) {
         if (data.playerstats?.achievements) {
             return data.playerstats.achievements;
         }
-        // Se retornar erro 400 ou similar, a função fetchWithTimeout já lança exceção
         return [];
     } catch (error) {
-        // Se o erro for 400 (Bad Request), relançamos para ser tratado como "sem conquistas"
-        if (error.message && error.message.includes('HTTP 400')) {
-            throw error;
+        // HTTP 400 é esperado para jogos sem conquistas públicas — tratar silenciosamente
+        if (error.isHttp400 || (error.message && error.message.includes('HTTP 400'))) {
+            return [];
         }
         console.error(`❌ Erro ao buscar conquistas ${appid}:`, error.message);
         return [];
@@ -369,7 +378,10 @@ async function buscarIconeConquista(appid, apiname) {
         }
         return null;
     } catch (error) {
-        console.error(`❌ Erro ao buscar ícone da conquista:`, error.message);
+        // HTTP 400 é esperado para jogos sem conquistas públicas — tratar silenciosamente
+        if (!error.isHttp400 && !(error.message && error.message.includes('HTTP 400'))) {
+            console.error(`❌ Erro ao buscar ícone da conquista:`, error.message);
+        }
         return null;
     }
 }
