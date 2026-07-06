@@ -218,7 +218,8 @@ async function buscarJogoCompleto(nome) {
                 url: `https://store.steampowered.com/app/${appid}`,
                 capa: `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
                 descricao: null,
-                dataLancamento: null
+                dataLancamento: null,
+                generos: null
             };
         }
 
@@ -595,51 +596,53 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // ============================
-    // /quero - COM EMBED DE DETALHES (CORRIGIDO)
+    // /quero - CORRIGIDO (COM TRY-CATCH E FALLBACKS)
     // ============================
     if (interaction.commandName === 'quero') {
         await interaction.deferReply({ ephemeral: true });
-        const nome = interaction.options.getString('jogo');
+        try {
+            const nome = interaction.options.getString('jogo');
 
-        // Busca detalhes completos (capa, descrição, data de lançamento)
-        const jogo = await buscarJogoCompleto(nome);
-        if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
+            const jogo = await buscarJogoCompleto(nome);
+            if (!jogo) {
+                return interaction.editReply('❌ Jogo não encontrado.');
+            }
 
-        // Verifica se já está na lista pessoal
-        if (!db.listaQuero[interaction.user.id]) db.listaQuero[interaction.user.id] = [];
-        if (db.listaQuero[interaction.user.id].some(j => j.appid === jogo.appid)) {
-            return interaction.editReply(`ℹ️ **${jogo.nome}** já está na sua lista /quero.`);
+            if (!db.listaQuero[interaction.user.id]) db.listaQuero[interaction.user.id] = [];
+            if (db.listaQuero[interaction.user.id].some(j => j.appid === jogo.appid)) {
+                return interaction.editReply(`ℹ️ **${jogo.nome}** já está na sua lista /quero.`);
+            }
+
+            const donos = await verificarJogoFamilia(jogo.appid);
+            if (donos.length) {
+                const nomes = donos.map(d => d.discordId ? `<@${d.discordId}>` : d.nome).join(', ');
+                return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
+            }
+
+            db.listaQuero[interaction.user.id].push({ appid: jogo.appid, nome: jogo.nome, link: jogo.url });
+            salvarDB(db);
+
+            const embed = new EmbedBuilder()
+                .setColor(0x00FF00)
+                .setTitle(`✅ ${jogo.nome || 'Jogo'}`)
+                .setURL(jogo.url || '#')
+                .setThumbnail(jogo.capa || null)
+                .setDescription(jogo.descricao || 'Sem descrição disponível.')
+                .addFields(
+                    { name: '📅 Data de Lançamento', value: jogo.dataLancamento || 'Data não informada', inline: true },
+                    { name: '🎮 Gênero', value: jogo.generos || 'Não informado', inline: true }
+                )
+                .setFooter({ text: 'Adicionado à sua lista /quero! Você será notificado(a) quando estiver disponível.' })
+                .setTimestamp();
+
+            await interaction.editReply({
+                content: `✅ **${jogo.nome}** adicionado à sua lista /quero!`,
+                embeds: [embed]
+            });
+        } catch (error) {
+            console.error('❌ Erro no comando /quero:', error);
+            await interaction.editReply('❌ Ocorreu um erro ao adicionar o jogo. Tente novamente mais tarde.');
         }
-
-        // Verifica se alguém da família já possui (rápido)
-        const donos = await verificarJogoFamilia(jogo.appid);
-        if (donos.length) {
-            const nomes = donos.map(d => d.discordId ? `<@${d.discordId}>` : d.nome).join(', ');
-            return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
-        }
-
-        // Adiciona à lista
-        db.listaQuero[interaction.user.id].push({ appid: jogo.appid, nome: jogo.nome, link: jogo.url });
-        salvarDB(db);
-
-        // 🔹 MONTA O EMBED COM DETALHES
-        const embed = new EmbedBuilder()
-            .setColor(0x00FF00)
-            .setTitle(`✅ ${jogo.nome}`)
-            .setURL(jogo.url)
-            .setThumbnail(jogo.capa || null)
-            .setDescription(jogo.descricao || 'Sem descrição disponível.')
-            .addFields(
-                { name: '📅 Data de Lançamento', value: jogo.dataLancamento || 'Data não informada', inline: true },
-                { name: '🎮 Gênero', value: jogo.generos || 'Não informado', inline: true }
-            )
-            .setFooter({ text: 'Adicionado à sua lista /quero! Você será notificado(a) quando estiver disponível.' })
-            .setTimestamp();
-
-        await interaction.editReply({
-            content: `✅ **${jogo.nome}** adicionado à sua lista /quero!`,
-            embeds: [embed]
-        });
     }
 
     // ============================
@@ -808,7 +811,7 @@ client.once('clientReady', async () => {
 
     try {
         const dono = await client.users.fetch(DONO_ID);
-        if (dono) await dono.send('🚀 Bot Steam Família online! (comando /quero com embed)');
+        if (dono) await dono.send('🚀 Bot Steam Família online! (comando /quero corrigido)');
     } catch (e) {}
 
     setImmediate(async () => {
@@ -827,3 +830,4 @@ client.once('clientReady', async () => {
 client.login(process.env.DISCORD_TOKEN)
     .then(() => console.log('🔑 Login realizado'))
     .catch(e => { console.error('❌ Erro ao login:', e); process.exit(1); });
+    
