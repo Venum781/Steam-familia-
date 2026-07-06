@@ -1053,9 +1053,10 @@ async function verificarJogosCompradosQuero() {
         for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
             if (!jogos || jogos.length === 0) continue;
 
-            const steamId = db.steamLinks?.[discordId];
+            // 🔹 AGORA USA O MAPEAMENTO DIRETO EM VEZ DE db.steamLinks
+            const steamId = Object.keys(discordUsers).find(key => discordUsers[key] === discordId);
             if (!steamId) {
-                console.log(`⚠️ Usuário ${discordId} não vinculou a Steam.`);
+                // 🔹 REMOVIDO O AVISO - apenas ignora silenciosamente
                 continue;
             }
 
@@ -1785,7 +1786,7 @@ client.on('interactionCreate', async (interaction) => {
                     return;
                 }
 
-                const steamId = db.steamLinks?.[interaction.user.id];
+                const steamId = Object.keys(discordUsers).find(key => discordUsers[key] === interaction.user.id);
                 if (steamId) {
                     const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${process.env.STEAM_KEY}&steamid=${steamId}&include_appinfo=true&format=json`;
                     const data = await fetchWithTimeout(url, 8000);
@@ -2218,7 +2219,7 @@ async function restaurarRankingDoCanal() {
 }
 
 // 🔹 ============================================
-// 🔹 HEALTH CHECK MELHORADO (RESPOSTA IMEDIATA)
+// 🔹 HEALTH CHECK MELHORADO
 // 🔹 ============================================
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
@@ -2281,7 +2282,7 @@ process.on('SIGINT', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 EVENTO clientReady
+// 🔹 EVENTO clientReady (com vinculação automática)
 // 🔹 ============================================
 client.once('clientReady', async () => {
     console.log(`✅ Bot online como ${client.user.tag}`);
@@ -2298,6 +2299,24 @@ client.once('clientReady', async () => {
     if (!rankingRestaurado) {
         console.log('ℹ️ Usando ranking do banco de dados (ou valores padrão).');
         carregarRanking();
+    }
+
+    // 🔹 🔹 🔹 VINCULAÇÃO AUTOMÁTICA 🔹 🔹 🔹
+    const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
+    let vinculados = 0;
+    for (const steamId of steamIds) {
+        const discordId = discordUsers[steamId];
+        if (discordId && !db.steamLinks[discordId]) {
+            db.steamLinks[discordId] = steamId;
+            vinculados++;
+            console.log(`🔗 Vinculado automaticamente: ${steamNames[steamId] || steamId} (${discordId}) -> ${steamId}`);
+        }
+    }
+    if (vinculados > 0) {
+        salvarDB(db);
+        console.log(`✅ ${vinculados} vínculos automáticos realizados.`);
+    } else {
+        console.log(`ℹ️ Nenhum novo vínculo necessário.`);
     }
 
     try {
@@ -2336,7 +2355,7 @@ client.once('clientReady', async () => {
         } catch (error) {
             console.error('❌ Erro na primeira execução de promoções:', error);
         }
-    }, 10000); // Aumentei para 10 segundos para dar tempo do bot estabilizar
+    }, 10000);
 
     console.log(`🔄 Iniciando monitoramento contínuo (${INTERVALO_VERIFICACAO / 1000}s)...`);
 
