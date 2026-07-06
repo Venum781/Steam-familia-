@@ -8,8 +8,8 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 // ============================
 // CONFIGURAÇÕES
 // ============================
-const INTERVALO_VERIFICACAO = 30 * 1000; // verificação de conquistas e jogos novos
-const INTERVALO_PROMOCOES = 60 * 60 * 1000; // 1 hora – verificação de promoções
+const INTERVALO_VERIFICACAO = 30 * 1000;
+const INTERVALO_PROMOCOES = 60 * 60 * 1000;
 const MAX_RETRIES = 2;
 const REQUEST_TIMEOUT = 8000;
 const MAX_JOGOS_POR_USUARIO = 5;
@@ -75,7 +75,6 @@ function carregarDB() {
             if (!parsed.listaQuero) parsed.listaQuero = {};
             if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
             if (!parsed.ultimoRankingEnviado) parsed.ultimoRankingEnviado = {};
-            // 🔹 novo campo: últimas notificações de promoção (para não repetir)
             if (!parsed.ultimasNotificacoesPromocao) parsed.ultimasNotificacoesPromocao = {};
             return parsed;
         }
@@ -105,9 +104,6 @@ let primeiraVerificacaoConcluida = false;
 let previousGames = {};
 let debounceRanking = false;
 
-// ============================
-// CLIENT DISCORD
-// ============================
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
@@ -230,13 +226,11 @@ async function buscarJogoPorAppId(appid) {
 
 // 🔹 BUSCA JOGO COMPLETO (ACEITA NOME OU LINK)
 async function buscarJogoCompleto(input) {
-    // Se for um link, extrai o appid
     const appidFromLink = extrairAppIdDoLink(input);
     if (appidFromLink) {
         return await buscarJogoPorAppId(appidFromLink);
     }
 
-    // Caso contrário, busca pelo nome
     try {
         const searchUrl = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(input)}&l=portuguese&cc=BR&max=1`;
         const searchData = await fetchWithTimeout(searchUrl, 5000);
@@ -244,8 +238,6 @@ async function buscarJogoCompleto(input) {
 
         const jogo = searchData.items[0];
         const appid = jogo.id;
-
-        // Busca detalhes completos
         const detailsUrl = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
         const detailsData = await fetchWithTimeout(detailsUrl, 5000);
         if (!detailsData[appid]?.success) {
@@ -277,7 +269,6 @@ async function buscarJogoCompleto(input) {
     }
 }
 
-// Versão simplificada para compatibilidade com outras funções
 async function buscarJogoSteam(nome) {
     const completo = await buscarJogoCompleto(nome);
     if (!completo) return null;
@@ -289,7 +280,7 @@ async function buscarJogoSteam(nome) {
     };
 }
 
-// 🔹 VERIFICA PREÇO DO JOGO (RETORNA OBJETO COM PROMOÇÃO)
+// 🔹 VERIFICA PREÇO
 async function verificarPrecoJogo(appid) {
     try {
         const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=br`;
@@ -369,11 +360,7 @@ async function verificarConquistas(steamId, games, mention, userName) {
             const totalJogo = conquistas.length;
 
             if (!db.conquistas[steamId][appid] || !primeiraVerificacaoConcluida) {
-                db.conquistas[steamId][appid] = {
-                    total,
-                    nomes: desbloqueadas.map(c => c.apiname),
-                    totalJogo
-                };
+                db.conquistas[steamId][appid] = { total, nomes: desbloqueadas.map(c => c.apiname), totalJogo };
                 continue;
             }
 
@@ -464,7 +451,6 @@ async function enviarRanking(forcar = false) {
 // ============================
 async function verificarPromocoesQuero() {
     console.log('🔄 Verificando promoções da lista /quero...');
-    const agora = Date.now();
     const hoje = new Date().toLocaleDateString('pt-BR');
 
     for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
@@ -477,16 +463,13 @@ async function verificarPromocoesQuero() {
             const preco = await verificarPrecoJogo(appid);
             if (!preco) continue;
 
-            // Se estiver em promoção
             if (preco.emPromocao) {
                 const chaveNotif = `promocao_${discordId}_${appid}`;
-                // Verifica se já notificou esta promoção (para não repetir)
                 const ultimaNotif = db.ultimasNotificacoesPromocao?.[chaveNotif];
                 if (ultimaNotif && ultimaNotif.data === hoje && ultimaNotif.preco === preco.precoAtual) {
-                    continue; // já notificou hoje com o mesmo preço
+                    continue;
                 }
 
-                // Envia DM
                 try {
                     const embed = new EmbedBuilder()
                         .setColor(0x00FF00)
@@ -505,12 +488,11 @@ async function verificarPromocoesQuero() {
                     await usuario.send({ embeds: [embed] });
                     console.log(`✅ Promoção notificada para ${usuario.username}: ${jogo.nome}`);
 
-                    // Salva que já notificou
                     if (!db.ultimasNotificacoesPromocao) db.ultimasNotificacoesPromocao = {};
                     db.ultimasNotificacoesPromocao[chaveNotif] = {
                         data: hoje,
                         preco: preco.precoAtual,
-                        timestamp: agora
+                        timestamp: Date.now()
                     };
                     salvarDB(db);
                 } catch (e) {
@@ -568,7 +550,6 @@ async function checkSteamGames() {
             }
         }
 
-        // Verifica compras da lista /quero (remove se o usuário ou alguém da família comprou)
         await verificarJogosCompradosQuero();
         await verificarJogosCompradosFamiliaQuero();
 
@@ -660,7 +641,7 @@ async function registrarComandos() {
             { name: 'ranking', description: 'Mostra o ranking da família' },
             { name: 'quero', description: 'Adiciona um jogo à sua lista /quero', options: [{ name: 'jogo', type: 3, required: true, description: 'Nome ou link do jogo' }] },
             { name: 'quero-listar', description: 'Lista seus jogos /quero' },
-            { name: 'quero-remover', description: 'Remove um jogo da lista /quero', options: [{ name: 'jogo', type: 3, required: true, description: 'Nome do jogo' }] },
+            { name: 'quero-remover', description: 'Remove um jogo da lista /quero', options: [{ name: 'jogo', type: 3, required: true, description: 'Nome do jogo ou número da posição (ex: 5)' }] },
             { name: 'dbstatus', description: '[DONO] Status do banco' }
         ]);
         console.log('✅ Comandos registrados.');
@@ -683,9 +664,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // ============================
-    // /tem - COM CAPA
-    // ============================
+    // /tem
     if (interaction.commandName === 'tem') {
         await interaction.deferReply({ ephemeral: true });
         const input = interaction.options.getString('jogo');
@@ -702,41 +681,31 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply({ embeds: [embed] });
     }
 
-    // ============================
     // /ranking
-    // ============================
     if (interaction.commandName === 'ranking') {
         await interaction.deferReply({ ephemeral: true });
         await interaction.editReply({ embeds: [gerarRanking()] });
     }
 
-    // ============================
-    // /quero - COM SUPORTE A LINKS E VERIFICAÇÃO DE PROMOÇÃO
-    // ============================
+    // /quero
     if (interaction.commandName === 'quero') {
         await interaction.deferReply({ ephemeral: true });
         try {
             const input = interaction.options.getString('jogo');
-
             const jogo = await buscarJogoCompleto(input);
-            if (!jogo) {
-                return interaction.editReply('❌ Jogo não encontrado. Verifique o nome ou link.');
-            }
+            if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
 
-            // Verifica se já está na lista pessoal
             if (!db.listaQuero[interaction.user.id]) db.listaQuero[interaction.user.id] = [];
             if (db.listaQuero[interaction.user.id].some(j => j.appid === jogo.appid)) {
                 return interaction.editReply(`ℹ️ **${jogo.nome}** já está na sua lista /quero.`);
             }
 
-            // Verifica se alguém da família já possui
             const donos = await verificarJogoFamilia(jogo.appid);
             if (donos.length) {
                 const nomes = donos.map(d => d.discordId ? `<@${d.discordId}>` : d.nome).join(', ');
                 return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
             }
 
-            // 🔹 VERIFICA SE ESTÁ EM PROMOÇÃO NO MOMENTO
             let promocaoMsg = '';
             const preco = await verificarPrecoJogo(jogo.appid);
             if (preco && preco.emPromocao) {
@@ -745,7 +714,6 @@ client.on('interactionCreate', async (interaction) => {
                               `Preço: ~~${preco.precoAntigo}~~ → **${preco.precoAtual}**\n\n`;
             }
 
-            // Adiciona à lista
             db.listaQuero[interaction.user.id].push({
                 appid: jogo.appid,
                 nome: jogo.nome,
@@ -754,7 +722,6 @@ client.on('interactionCreate', async (interaction) => {
             });
             salvarDB(db);
 
-            // 🔹 MONTA O EMBED COM DETALHES E STATUS DA PROMOÇÃO
             const embed = new EmbedBuilder()
                 .setColor(preco?.emPromocao ? 0xFFA500 : 0x00FF00)
                 .setTitle(`✅ ${jogo.nome}`)
@@ -769,14 +736,12 @@ client.on('interactionCreate', async (interaction) => {
                 .setFooter({ text: 'Adicionado à sua lista /quero! Você será notificado(a) quando entrar em promoção.' })
                 .setTimestamp();
 
-            // Se estiver em promoção, adiciona uma mensagem extra no conteúdo
             let content = `✅ **${jogo.nome}** adicionado à sua lista /quero!`;
             if (preco?.emPromocao) {
                 content += `\n\n🟢 **Este jogo está EM PROMOÇÃO AGORA!**\n` +
                            `Desconto: **${preco.desconto}%**\n` +
                            `Preço: ~~${preco.precoAntigo}~~ → **${preco.precoAtual}**\n` +
                            `🔗 ${jogo.url}`;
-                // Já notifica a promoção imediatamente, sem esperar a verificação periódica
                 const chaveNotif = `promocao_${interaction.user.id}_${jogo.appid}`;
                 const hoje = new Date().toLocaleDateString('pt-BR');
                 if (!db.ultimasNotificacoesPromocao) db.ultimasNotificacoesPromocao = {};
@@ -788,19 +753,14 @@ client.on('interactionCreate', async (interaction) => {
                 salvarDB(db);
             }
 
-            await interaction.editReply({
-                content: content,
-                embeds: [embed]
-            });
+            await interaction.editReply({ content, embeds: [embed] });
         } catch (error) {
             console.error('❌ Erro no comando /quero:', error);
             await interaction.editReply('❌ Ocorreu um erro ao adicionar o jogo. Tente novamente mais tarde.');
         }
     }
 
-    // ============================
     // /quero-listar
-    // ============================
     if (interaction.commandName === 'quero-listar') {
         await interaction.deferReply({ ephemeral: true });
         const lista = db.listaQuero[interaction.user.id] || [];
@@ -811,26 +771,49 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply({ embeds: [embed] });
     }
 
-    // ============================
-    // /quero-remover
-    // ============================
+    // /quero-remover - ACEITA NOME OU NÚMERO DA POSIÇÃO
     if (interaction.commandName === 'quero-remover') {
         await interaction.deferReply({ ephemeral: true });
         const input = interaction.options.getString('jogo');
-        // Permite remover por nome ou link
-        const jogo = await buscarJogoSteam(input);
-        if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
         const lista = db.listaQuero[interaction.user.id] || [];
-        const idx = lista.findIndex(j => j.appid === jogo.appid);
-        if (idx === -1) return interaction.editReply(`ℹ️ **${jogo.nome}** não está na sua lista.`);
+
+        if (!lista.length) {
+            return interaction.editReply('📭 Sua lista /quero está vazia.');
+        }
+
+        let jogoRemovido = null;
+        let idx = -1;
+
+        // Tenta interpretar como número (posição na lista)
+        const posicao = parseInt(input);
+        if (!isNaN(posicao) && posicao >= 1 && posicao <= lista.length) {
+            idx = posicao - 1;
+            jogoRemovido = lista[idx];
+        } else {
+            // Se não for número, busca pelo nome
+            const jogoBuscado = await buscarJogoSteam(input);
+            if (jogoBuscado) {
+                idx = lista.findIndex(j => j.appid === jogoBuscado.appid);
+                if (idx !== -1) jogoRemovido = lista[idx];
+            }
+            // Se não encontrar por appid, tenta comparar nomes (ignorando maiúsculas)
+            if (idx === -1) {
+                idx = lista.findIndex(j => j.nome.toLowerCase() === input.toLowerCase());
+                if (idx !== -1) jogoRemovido = lista[idx];
+            }
+        }
+
+        if (idx === -1 || !jogoRemovido) {
+            return interaction.editReply(`❌ Não encontrei o jogo **${input}** na sua lista. Use o nome exato ou o número da posição (ex: 1, 2, 3...).`);
+        }
+
         lista.splice(idx, 1);
         salvarDB(db);
-        await interaction.editReply(`✅ **${jogo.nome}** removido da lista /quero.`);
+
+        await interaction.editReply(`✅ **${jogoRemovido.nome}** removido da sua lista /quero!`);
     }
 
-    // ============================
     // /dbstatus
-    // ============================
     if (interaction.commandName === 'dbstatus') {
         if (interaction.user.id !== DONO_ID) return interaction.reply({ content: '❌ Apenas o dono.', ephemeral: true });
         await interaction.deferReply({ ephemeral: true });
@@ -965,10 +948,9 @@ client.once('clientReady', async () => {
 
     try {
         const dono = await client.users.fetch(DONO_ID);
-        if (dono) await dono.send('🚀 Bot Steam Família online! (com /quero aprimorado)');
+        if (dono) await dono.send('🚀 Bot Steam Família online! (com /quero-remover por número)');
     } catch (e) {}
 
-    // Inicia o loop principal
     setImmediate(async () => {
         console.log('🎮 Iniciando verificação...');
         await checkSteamGames();
@@ -978,20 +960,15 @@ client.once('clientReady', async () => {
         try { await checkSteamGames(); } catch (e) { console.error('Erro no intervalo:', e); }
     }, INTERVALO_VERIFICACAO);
 
-    // 🔹 Intervalo para verificar promoções da lista /quero (a cada 1 hora)
     setInterval(async () => {
         try { await verificarPromocoesQuero(); } catch (e) { console.error('Erro ao verificar promoções:', e); }
     }, INTERVALO_PROMOCOES);
 
-    // Executa a primeira verificação de promoções após 5 minutos
     setTimeout(async () => {
         await verificarPromocoesQuero();
     }, 5 * 60 * 1000);
 });
 
-// ============================
-// LOGIN
-// ============================
 client.login(process.env.DISCORD_TOKEN)
     .then(() => console.log('🔑 Login realizado'))
     .catch(e => { console.error('❌ Erro ao login:', e); process.exit(1); });
