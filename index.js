@@ -204,6 +204,7 @@ function carregarDB() {
             if (!parsed.ultimaNotificacaoPromocao) parsed.ultimaNotificacaoPromocao = {};
             if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
             if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {};
+            if (!parsed.ultimoRankingEnviado) parsed.ultimoRankingEnviado = {};
 
             const totalJogos = Object.values(parsed.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
             console.log(`📊 Banco de dados carregado: ${totalJogos} jogos na lista /quero`);
@@ -232,7 +233,8 @@ function carregarDB() {
         jogosNotificadosPermanentes: {},
         ultimaNotificacaoPromocao: {},
         ultimaMensagemRankingId: null,
-        jogosSemConquistas: {}
+        jogosSemConquistas: {},
+        ultimoRankingEnviado: {}
     };
 }
 
@@ -257,6 +259,7 @@ if (!db.jogosNotificadosPermanentes) db.jogosNotificadosPermanentes = {};
 if (!db.ultimaNotificacaoPromocao) db.ultimaNotificacaoPromocao = {};
 if (!db.ultimaMensagemRankingId) db.ultimaMensagemRankingId = null;
 if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+if (!db.ultimoRankingEnviado) db.ultimoRankingEnviado = {};
 
 // 🔹 RANKING
 const rankingPadrao = {
@@ -292,6 +295,8 @@ function carregarRanking() {
 let previousGames = {};
 let ultimaMensagemRankingId = null;
 let primeiraVerificacaoConcluida = false;
+let rankingEnviadoUltimaVez = {};
+let debounceRanking = false;
 
 // 🔹 ============================================
 // 🔹 FUNÇÕES AUXILIARES
@@ -1053,10 +1058,8 @@ async function verificarJogosCompradosQuero() {
         for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
             if (!jogos || jogos.length === 0) continue;
 
-            // 🔹 AGORA USA O MAPEAMENTO DIRETO EM VEZ DE db.steamLinks
             const steamId = Object.keys(discordUsers).find(key => discordUsers[key] === discordId);
             if (!steamId) {
-                // 🔹 REMOVIDO O AVISO - apenas ignora silenciosamente
                 continue;
             }
 
@@ -1359,7 +1362,7 @@ async function buscarSugestoesJogos(termo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÕES: gerarRanking, enviarRanking, verificarSuporteFamilia, checkSteamGames, registrarComandos
+// 🔹 FUNÇÃO: gerarRanking (compara com último enviado)
 // 🔹 ============================================
 function gerarRanking() {
     const rankingArray = Object.values(ranking).sort((a, b) => b.jogos - a.jogos);
@@ -1385,15 +1388,41 @@ function gerarRanking() {
     return embed;
 }
 
-async function enviarRanking() {
-    db.ranking = ranking;
-    salvarDB(db);
-
-    const embedRanking = gerarRanking();
-    const channel = client.channels.cache.get(CHANNEL_RANKING);
-    if (!channel) return;
+// 🔹 ============================================
+// 🔹 FUNÇÃO: enviarRanking (com prevenção de spam e leitura do canal)
+// 🔹 ============================================
+async function enviarRanking(forcar = false) {
+    // Evita múltiplos envios simultâneos
+    if (debounceRanking) {
+        console.log('⏳ Ranking já está sendo enviado, ignorando nova solicitação.');
+        return;
+    }
+    debounceRanking = true;
 
     try {
+        // Atualiza o ranking no banco
+        db.ranking = ranking;
+        salvarDB(db);
+
+        // Gera o embed atual
+        const embedAtual = gerarRanking();
+        const descricaoAtual = embedAtual.data.description;
+
+        // Se não for forçado, verifica se o ranking já está igual ao último enviado
+        if (!forcar && db.ultimoRankingEnviado && db.ultimoRankingEnviado.descricao === descricaoAtual) {
+            console.log('ℹ️ Ranking não mudou. Nada a enviar.');
+            debounceRanking = false;
+            return;
+        }
+
+        const channel = client.channels.cache.get(CHANNEL_RANKING);
+        if (!channel) {
+            console.error('❌ Canal de ranking não encontrado!');
+            debounceRanking = false;
+            return;
+        }
+
+        // Apaga a mensagem antiga, se existir
         if (ultimaMensagemRankingId) {
             try {
                 const mensagemAntiga = await channel.messages.fetch(ultimaMensagemRankingId);
@@ -1406,19 +1435,68 @@ async function enviarRanking() {
             }
         }
 
-        const novaMensagem = await channel.send({ embeds: [embedRanking] });
+        // Envia a nova mensagem
+        const novaMensagem = await channel.send({ embeds: [embedAtual] });
         ultimaMensagemRankingId = novaMensagem.id;
-
         db.ultimaMensagemRankingId = ultimaMensagemRankingId;
+
+        // Salva o ranking enviado para comparação futura
+        db.ultimoRankingEnviado = {
+            descricao: descricaoAtual,
+            timestamp: Date.now()
+        };
         salvarDB(db);
 
         console.log(`📊 Novo ranking enviado! ID: ${ultimaMensagemRankingId}`);
 
     } catch (error) {
         console.error(`❌ Erro ao enviar/atualizar ranking:`, error);
+    } finally {
+        debounceRanking = false;
     }
 }
 
+// 🔹 ============================================
+// 🔹 FUNÇÃO: limparMensagensAntigas (remove mensagens do bot nos últimos 20 minutos)
+// 🔹 ============================================
+async function limparMensagensAntigas() {
+    const canais = [CHANNEL_RANKING, CHANNEL_PROMOCOES, CHANNEL_CONQUISTAS, CHANNEL_NOTIFICACOES];
+    const agora = Date.now();
+    const vinteMinutos = 20 * 60 * 1000;
+    let totalApagadas = 0;
+
+    for (const canalId of canais) {
+        if (!canalId) continue;
+        const channel = client.channels.cache.get(canalId);
+        if (!channel) continue;
+
+        try {
+            const messages = await channel.messages.fetch({ limit: 100 });
+            const botMessages = messages.filter(msg => msg.author.id === client.user.id);
+            const antigas = botMessages.filter(msg => (agora - msg.createdTimestamp) > vinteMinutos);
+
+            if (antigas.size > 0) {
+                console.log(`🧹 Apagando ${antigas.size} mensagens antigas do bot no canal ${channel.name}`);
+                for (const msg of antigas.values()) {
+                    await msg.delete().catch(() => {});
+                    totalApagadas++;
+                    // Pequeno delay para não sobrecarregar
+                    await new Promise(r => setTimeout(r, 200));
+                }
+            }
+        } catch (error) {
+            console.error(`❌ Erro ao limpar mensagens no canal ${channel.name}:`, error.message);
+        }
+    }
+
+    if (totalApagadas > 0) {
+        console.log(`🧹 Total de ${totalApagadas} mensagens antigas apagadas.`);
+    }
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: verificarSuporteFamilia, checkSteamGames, registrarComandos
+// 🔹 ============================================
 async function verificarSuporteFamilia(appid) {
     try {
         const url = `https://store.steampowered.com/app/${appid}`;
@@ -1481,8 +1559,9 @@ async function checkSteamGames() {
                     console.log(`📊 ${userName}: ${currentGames.length} jogos`);
                 } else {
                     const oldGames = previousGames[trimmedId];
-                    const oldNames = oldGames.map(g => g.name);
-                    const newGames = currentGames.filter(g => !oldNames.includes(g.name));
+                    // Comparar por appid, não por nome
+                    const oldAppIds = new Set(oldGames.map(g => g.appid));
+                    const newGames = currentGames.filter(g => !oldAppIds.has(g.appid));
 
                     if (newGames.length) {
                         console.log(`🎮 ${userName} +${newGames.length} novo(s) jogo(s)!`);
@@ -1527,7 +1606,8 @@ async function checkSteamGames() {
                                     ranking[trimmedId].jogos += 1;
                                     db.ranking = ranking;
                                     salvarDB(db);
-                                    await enviarRanking();
+                                    // Só envia o ranking se houve mudança
+                                    await enviarRanking(false);
                                 }
                             }
                         }
@@ -2130,7 +2210,7 @@ client.on('messageCreate', async (message) => {
             ranking = JSON.parse(JSON.stringify(rankingPadrao));
             db.ranking = ranking;
             salvarDB(db);
-            await enviarRanking();
+            await enviarRanking(true); // Força o envio
             await message.reply({
                 content: '✅ Ranking resetado para os valores padrão!',
                 ephemeral: true
@@ -2148,6 +2228,9 @@ client.on('messageCreate', async (message) => {
     }
 });
 
+// 🔹 ============================================
+// 🔹 FUNÇÃO: restaurarRankingDoCanal (melhorada)
+// 🔹 ============================================
 async function restaurarRankingDoCanal() {
     const channel = client.channels.cache.get(CHANNEL_RANKING);
     if (!channel) {
@@ -2156,15 +2239,28 @@ async function restaurarRankingDoCanal() {
     }
 
     try {
-        const ultimaMensagemId = db.ultimaMensagemRankingId;
-        if (!ultimaMensagemId) {
-            console.log('ℹ️ Nenhum ID de mensagem de ranking salvo.');
-            return false;
+        // Primeiro, tenta buscar a mensagem pelo ID salvo
+        let mensagem = null;
+        if (db.ultimaMensagemRankingId) {
+            try {
+                mensagem = await channel.messages.fetch(db.ultimaMensagemRankingId);
+            } catch (error) {
+                console.log(`ℹ️ Mensagem de ranking com ID ${db.ultimaMensagemRankingId} não encontrada.`);
+            }
         }
 
-        const mensagem = await channel.messages.fetch(ultimaMensagemId);
+        // Se não encontrou, busca a última mensagem do bot no canal
         if (!mensagem) {
-            console.log('ℹ️ Mensagem de ranking não encontrada no canal.');
+            const messages = await channel.messages.fetch({ limit: 10 });
+            const botMessages = messages.filter(msg => msg.author.id === client.user.id && msg.embeds.length > 0);
+            if (botMessages.size > 0) {
+                mensagem = botMessages.first();
+                console.log(`📩 Encontrada mensagem de ranking alternativa: ${mensagem.id}`);
+            }
+        }
+
+        if (!mensagem) {
+            console.log('ℹ️ Nenhuma mensagem de ranking encontrada no canal.');
             return false;
         }
 
@@ -2174,15 +2270,18 @@ async function restaurarRankingDoCanal() {
             return false;
         }
 
+        // Extrai os dados do ranking da descrição
         const linhas = embed.description.split('\n');
         const rankingRestaurado = {};
+        let encontrou = false;
 
         for (const linha of linhas) {
-            const match = linha.match(/(?:🥇|🥈|🥉|\d+°)\s+<@!?(\d+)>\s+—\s+(\d+)\s+jogos/);
+            // Match: "🥇 **@usuario** — 98 jogos"
+            const match = linha.match(/(?:🥇|🥈|🥉|\d+°)\s+\*\*<@!?(\d+)>\*\*\s+—\s+(\d+)\s+jogos/);
             if (match) {
                 const discordId = match[1];
                 const jogos = parseInt(match[2]);
-
+                // Encontra o steamId correspondente
                 for (const [steamId, dados] of Object.entries(discordUsers)) {
                     if (dados === discordId) {
                         rankingRestaurado[steamId] = {
@@ -2191,15 +2290,31 @@ async function restaurarRankingDoCanal() {
                             steamId: steamId,
                             discordId: discordId
                         };
+                        encontrou = true;
                         break;
                     }
                 }
             }
         }
 
-        if (Object.keys(rankingRestaurado).length > 0) {
+        if (encontrou && Object.keys(rankingRestaurado).length > 0) {
+            // Adiciona membros que não estão na mensagem (caso novos)
+            for (const [steamId, dados] of Object.entries(rankingPadrao)) {
+                if (!rankingRestaurado[steamId]) {
+                    rankingRestaurado[steamId] = dados;
+                    console.log(`📊 Adicionando novo membro ao ranking: ${dados.nome}`);
+                }
+            }
+
             ranking = rankingRestaurado;
             db.ranking = ranking;
+            db.ultimaMensagemRankingId = mensagem.id;
+            ultimaMensagemRankingId = mensagem.id;
+            // Salva o ranking enviado para comparação
+            db.ultimoRankingEnviado = {
+                descricao: embed.description,
+                timestamp: Date.now()
+            };
             salvarDB(db);
 
             console.log(`✅ Ranking restaurado do canal: ${Object.keys(ranking).length} usuários`);
@@ -2282,7 +2397,7 @@ process.on('SIGINT', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 EVENTO clientReady (com vinculação automática)
+// 🔹 EVENTO clientReady (com vinculação automática e limpeza)
 // 🔹 ============================================
 client.once('clientReady', async () => {
     console.log(`✅ Bot online como ${client.user.tag}`);
@@ -2295,13 +2410,31 @@ client.once('clientReady', async () => {
     console.log(`🔄 Rate limit: ${rateLimiter.minDelay}ms entre requisições`);
     console.log(`🔄 Max retries: ${MAX_RETRIES} tentativas`);
 
+    // 🔹 LIMPA MENSAGENS ANTIGAS DO BOT (ÚLTIMOS 20 MIN)
+    console.log('🧹 Limpando mensagens antigas do bot...');
+    await limparMensagensAntigas();
+
+    // 🔹 RESTAURA O RANKING DO CANAL
     const rankingRestaurado = await restaurarRankingDoCanal();
     if (!rankingRestaurado) {
         console.log('ℹ️ Usando ranking do banco de dados (ou valores padrão).');
         carregarRanking();
+        // Envia o ranking pela primeira vez
+        await enviarRanking(true);
+    } else {
+        // Se restaurou, verifica se o ranking atual é diferente do que está no canal
+        // e envia se necessário
+        const embedAtual = gerarRanking();
+        const descricaoAtual = embedAtual.data.description;
+        if (db.ultimoRankingEnviado && db.ultimoRankingEnviado.descricao !== descricaoAtual) {
+            console.log('📊 Ranking restaurado, mas houve mudanças. Enviando atualização.');
+            await enviarRanking(true);
+        } else {
+            console.log('✅ Ranking restaurado e atualizado.');
+        }
     }
 
-    // 🔹 🔹 🔹 VINCULAÇÃO AUTOMÁTICA 🔹 🔹 🔹
+    // 🔹 VINCULAÇÃO AUTOMÁTICA
     const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
     let vinculados = 0;
     for (const steamId of steamIds) {
@@ -2322,7 +2455,7 @@ client.once('clientReady', async () => {
     try {
         const dono = await client.users.fetch(DONO_ID);
         if (dono) {
-            await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite /ranking\n🔎 Use /tem [jogo]\n🛒 Use /quero [jogo] para ser notificado de promoções e lançamentos!\n🔄 Rate limiting ativo: ${rateLimiter.minDelay}ms entre requisições`);
+            await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite /ranking\n🔎 Use /tem [jogo]\n🛒 Use /quero [jogo] para ser notificado de promoções e lançamentos!\n🔄 Rate limiting ativo: ${rateLimiter.minDelay}ms entre requisições\n🧹 Mensagens antigas do bot foram limpas.`);
         }
     } catch (error) {
         console.error('❌ Erro ao enviar DM para o dono:', error);
@@ -2366,6 +2499,12 @@ client.once('clientReady', async () => {
             console.error('❌ Erro no intervalo:', error);
         }
     }, INTERVALO_VERIFICACAO);
+
+    // Limpeza periódica de mensagens antigas (a cada 6 horas)
+    setInterval(async () => {
+        console.log('🧹 Limpeza periódica de mensagens antigas...');
+        await limparMensagensAntigas();
+    }, 6 * 60 * 60 * 1000);
 });
 
 // 🔹 ============================================
