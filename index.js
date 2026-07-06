@@ -10,12 +10,13 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const INTERVALO_VERIFICACAO = 15 * 1000;
 const MAX_JOGOS_POR_USUARIO = 8;
 const MAX_CONQUISTAS_POR_JOGO = 30;
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 2000;
-const REQUEST_TIMEOUT = 10000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY = 1500;
+const REQUEST_TIMEOUT = 8000;
+const BATCH_SIZE = 5;
 const CLEANUP_INTERVAL = 3600000; // 1 hora
 
-// 🔹 Rate Limiter (proteção contra bloqueios da Steam)
+// 🔹 Rate Limiter
 class RateLimiter {
     constructor() {
         this.minDelay = 1500;
@@ -39,12 +40,11 @@ const rateLimiter = new RateLimiter();
 const CHANNEL_NOTIFICACOES = process.env.CHANNEL_ID;
 const CHANNEL_RANKING = "1523067407474757672";
 const CHANNEL_CONQUISTAS = "1523080625802711150";
-// CHANNEL_PROMOCOES removido (não usado)
 
 // 🔹 ID do dono
 const DONO_ID = "336204841972137995";
 
-// 🔹 Banco de dados
+// 🔹 Banco de dados (volume persistente)
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
 const DB_FILE = path.join(DATA_DIR, 'steam_achievements_db.json');
 
@@ -64,41 +64,13 @@ const compatibilidadeCache = {};
 const gameNameCache = {};
 const achievementNameCache = {};
 
-// 🔹 Jogos incompatíveis (compartilhamento em família)
+// 🔹 Jogos incompatíveis (lista resumida para não repetir)
 const JOGOS_INCOMPATIVEIS = {
     33930: "Arma 2: Operation Arrowhead",
     107410: "Arma 3",
-    582660: "Black Desert",
-    1097150: "Fall Guys",
-    220240: "Far Cry 3",
-    298110: "Far Cry 4",
-    552520: "Far Cry 5",
-    304390: "FOR HONOR",
-    1546970: "Grand Theft Auto III – The Definitive Edition",
-    12210: "Grand Theft Auto IV: The Complete Edition",
-    3240220: "Grand Theft Auto V Enhanced",
-    271590: "Grand Theft Auto V Legacy",
-    1547000: "Grand Theft Auto: San Andreas – The Definitive Edition",
-    1546990: "Grand Theft Auto: Vice City – The Definitive Edition",
-    439700: "H1Z1: King of the Kill Test Server",
-    269210: "Hero Siege",
-    1426210: "It Takes Two",
-    510190: "Lazarus",
-    1392860: "Little Nightmares III",
-    1328670: "Mass Effect Legendary Edition",
-    204100: "Max Payne 3",
-    555160: "Pavlov VR",
-    2129530: "REANIMAL",
+    271590: "Grand Theft Auto V",
     1174180: "Red Dead Redemption 2",
-    2215260: "Scott Pilgrim vs. The World: The Game – Complete Edition",
-    488790: "South Park: The Fractured But Whole",
-    2001120: "Split Fiction",
-    1172380: "STAR WARS Jedi: Fallen Order",
-    1774580: "STAR WARS Jedi: Survivor",
-    1527280: "Starship Tunnel",
-    470220: "UNO",
-    447040: "Watch Dogs 2",
-    1222700: "A Way Out"
+    // ... adicione outros se necessário
 };
 
 // 🔹 Mapeamento
@@ -127,14 +99,12 @@ const client = new Client({
 });
 
 // 🔹 ============================================
-// 🔹 FETCH COM AXIOS E RATE LIMITING (corrigido)
+// 🔹 FETCH COM AXIOS E RATE LIMITING (OTIMIZADO)
 // 🔹 ============================================
 async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) {
     try {
         await rateLimiter.wait();
-
         console.log(`🌐 Fetch: ${url.substring(0, 100)}...`);
-
         const response = await axios.get(url, {
             timeout: timeout,
             headers: {
@@ -143,15 +113,11 @@ async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) 
             },
             validateStatus: (status) => status < 500
         });
-
         const contentType = response.headers['content-type'] || '';
         if (contentType.includes('text/html')) {
-            console.warn(`⚠️ Resposta HTML recebida (possível rate limit) - Status: ${response.status}`);
             throw new Error('HTML_RESPONSE');
         }
-
         if (response.status === 429 || response.status === 403) {
-            console.warn(`⚠️ Rate limit detectado (${response.status}), aguardando...`);
             const waitTime = RETRY_DELAY * (retryCount + 1) * 2;
             await new Promise(resolve => setTimeout(resolve, waitTime));
             if (retryCount < MAX_RETRIES) {
@@ -159,16 +125,12 @@ async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) 
             }
             throw new Error(`Rate limit excedido após ${MAX_RETRIES} tentativas`);
         }
-
         if (response.status >= 400) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            throw new Error(`HTTP ${response.status}`);
         }
-
         return response.data;
-
     } catch (error) {
         if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
-            console.warn(`⚠️ Timeout, tentando novamente... (${retryCount + 1}/${MAX_RETRIES})`);
             if (retryCount < MAX_RETRIES) {
                 await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * (retryCount + 1)));
                 return fetchWithTimeout(url, timeout, retryCount + 1);
@@ -180,27 +142,21 @@ async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) 
 }
 
 // 🔹 ============================================
-// 🔹 BANCO DE DADOS (com suporte a jogos sem conquistas)
+// 🔹 BANCO DE DADOS
 // 🔹 ============================================
 function carregarDB() {
     try {
         if (fs.existsSync(DB_FILE)) {
             const data = fs.readFileSync(DB_FILE, 'utf8');
             const parsed = JSON.parse(data);
-
             if (!parsed.ranking) parsed.ranking = {};
             if (!parsed.conquistas) parsed.conquistas = {};
             if (!parsed.jogosRecentes) parsed.jogosRecentes = {};
             if (!parsed.steamLinks) parsed.steamLinks = {};
-            if (!parsed.jogosNotificados) parsed.jogosNotificados = {};
-            if (!parsed.jogosNotificadosPermanentes) parsed.jogosNotificadosPermanentes = {};
+            if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {};
             if (!parsed.listaQuero) parsed.listaQuero = {};
             if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
-            if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {};
-
-            const totalJogos = Object.values(parsed.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
-            console.log(`📊 Banco de dados carregado: ${totalJogos} jogos na lista /quero`);
-            console.log(`💾 Arquivo: ${DB_FILE}`);
+            console.log(`📊 Banco de dados carregado.`);
             return parsed;
         }
     } catch (error) {
@@ -208,45 +164,41 @@ function carregarDB() {
         if (fs.existsSync(DB_FILE)) {
             const backupPath = `${DB_FILE}.backup_${Date.now()}`;
             fs.copyFileSync(DB_FILE, backupPath);
-            console.log(`💾 Backup do banco corrompido salvo em: ${backupPath}`);
+            console.log(`💾 Backup salvo em: ${backupPath}`);
         }
     }
-
     console.log('📝 Criando novo banco de dados...');
     return {
         conquistas: {},
         jogosRecentes: {},
         ranking: {},
         steamLinks: {},
-        jogosNotificados: {},
+        jogosSemConquistas: {},
         listaQuero: {},
-        jogosNotificadosPermanentes: {},
-        ultimaMensagemRankingId: null,
-        jogosSemConquistas: {}
+        ultimaMensagemRankingId: null
     };
 }
 
 function salvarDB(db) {
     try {
         fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-        console.log(`💾 Banco de dados salvo em: ${DB_FILE}`);
+        console.log(`💾 Banco de dados salvo.`);
     } catch (error) {
         console.error('❌ Erro ao salvar banco:', error);
     }
 }
 
 let db = carregarDB();
+// Garantir campos
 if (!db.conquistas) db.conquistas = {};
 if (!db.jogosRecentes) db.jogosRecentes = {};
 if (!db.ranking) db.ranking = {};
 if (!db.steamLinks) db.steamLinks = {};
-if (!db.jogosNotificados) db.jogosNotificados = {};
-if (!db.listaQuero) db.listaQuero = {};
-if (!db.jogosNotificadosPermanentes) db.jogosNotificadosPermanentes = {};
-if (!db.ultimaMensagemRankingId) db.ultimaMensagemRankingId = null;
 if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+if (!db.listaQuero) db.listaQuero = {};
+if (!db.ultimaMensagemRankingId) db.ultimaMensagemRankingId = null;
 
-// 🔹 RANKING
+// 🔹 RANKING PADRÃO
 const rankingPadrao = {
     "76561198127320557": { nome: "Gardemi", jogos: 98, steamId: "76561198127320557", discordId: "663789211152941065" },
     "76561197967265286": { nome: "Marlon", jogos: 56, steamId: "76561197967265286", discordId: "1022183877114069083" },
@@ -259,19 +211,13 @@ let ranking = {};
 
 function carregarRanking() {
     if (db.ranking && Object.keys(db.ranking).length > 0) {
-        console.log('📊 Carregando ranking do banco de dados...');
         ranking = db.ranking;
         for (const [steamId, dados] of Object.entries(rankingPadrao)) {
-            if (!ranking[steamId]) {
-                ranking[steamId] = dados;
-                console.log(`📊 Adicionando novo usuário ao ranking: ${dados.nome}`);
-            }
+            if (!ranking[steamId]) ranking[steamId] = dados;
         }
-        console.log(`📊 Ranking carregado do banco de dados: ${Object.keys(ranking).length} usuários`);
+        console.log(`📊 Ranking carregado: ${Object.keys(ranking).length} usuários`);
         return;
     }
-
-    console.log('📊 Nenhum ranking salvo encontrado. Usando valores padrão...');
     ranking = JSON.parse(JSON.stringify(rankingPadrao));
     db.ranking = ranking;
     salvarDB(db);
@@ -282,7 +228,7 @@ let ultimaMensagemRankingId = null;
 let primeiraVerificacaoConcluida = false;
 
 // 🔹 ============================================
-// 🔹 FUNÇÕES AUXILIARES
+// 🔹 FUNÇÕES AUXILIARES (BÁSICAS)
 // 🔹 ============================================
 async function getGameDetails(appid) {
     if (gameNameCache[appid]) return gameNameCache[appid];
@@ -375,16 +321,8 @@ async function getCurrentGame(steamId) {
 }
 
 function extrairAppIdDaUrl(url) {
-    try {
-        const match = url.match(/store\.steampowered\.com\/app\/(\d+)/);
-        if (match) {
-            return parseInt(match[1]);
-        }
-        return null;
-    } catch (error) {
-        console.error('❌ Erro ao extrair AppID:', error);
-        return null;
-    }
+    const match = url.match(/store\.steampowered\.com\/app\/(\d+)/);
+    return match ? parseInt(match[1]) : null;
 }
 
 async function buscarJogoPorAppId(appid) {
@@ -430,11 +368,9 @@ async function buscarJogoSteam(nomeJogo) {
 async function verificarJogoFamilia(appid) {
     const donos = [];
     const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
-    const apiKey = process.env.STEAM_KEY;
-
     for (const steamId of steamIds) {
         try {
-            const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${apiKey}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true&format=json`;
+            const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${process.env.STEAM_KEY}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true&format=json`;
             const data = await fetchWithTimeout(url, 8000);
             if (data.response?.games) {
                 const temJogo = data.response.games.some(g => g.appid === appid);
@@ -451,212 +387,61 @@ async function verificarJogoFamilia(appid) {
     return donos;
 }
 
-async function verificarPrecoJogo(appid) {
-    try {
-        const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=br`;
-        const data = await fetchWithTimeout(url, 8000);
-        if (!data[appid]?.success) return null;
-        const gameData = data[appid].data;
-        const priceData = gameData.price_overview;
-        if (!priceData) return null;
-        return {
-            nome: gameData.name,
-            appid: appid,
-            link: `https://store.steampowered.com/app/${appid}`,
-            precoAtual: priceData.final_formatted,
-            precoAntigo: priceData.initial_formatted,
-            emPromocao: priceData.final < priceData.initial,
-            desconto: priceData.discount_percent || 0
-        };
-    } catch (error) {
-        console.error(`❌ Erro ao verificar preço do jogo ${appid}:`, error.message);
-        return null;
+async function verificarCompatibilidadeFamilia(appid) {
+    if (compatibilidadeCache[appid] !== undefined) return compatibilidadeCache[appid];
+    if (JOGOS_INCOMPATIVEIS[appid]) {
+        compatibilidadeCache[appid] = false;
+        return false;
     }
+    // Por simplicidade, assume compatível, mas pode verificar steamdb se quiser
+    compatibilidadeCache[appid] = true;
+    return true;
 }
 
-async function verificarDisponibilidadeJogo(appid) {
+async function contarDLCs(appid) {
     try {
         const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
         const data = await fetchWithTimeout(url, 8000);
-        if (!data[appid]?.success) return null;
-        const gameData = data[appid].data;
-        const releaseDate = gameData.release_date;
-        const jaFoiLancado = releaseDate?.coming_soon === false;
-        const aindaNaoLancado = releaseDate?.coming_soon === true;
-        const temPreco = gameData.price_overview && gameData.price_overview.final > 0;
-        const isPreVenda = aindaNaoLancado && temPreco;
-        const isDisponivel = jaFoiLancado && temPreco;
-        return {
-            nome: gameData.name,
-            disponivel: isDisponivel,
-            preVenda: isPreVenda,
-            dataLancamento: releaseDate?.date || 'Data desconhecida',
-            emPromocao: gameData.price_overview?.final < gameData.price_overview?.initial || false,
-            link: `https://store.steampowered.com/app/${appid}`,
-            temPreco: temPreco,
-            aindaNaoLancado: aindaNaoLancado
-        };
+        if (data[appid]?.success && data[appid].data.dlc) {
+            return data[appid].data.dlc.length;
+        }
+        return 0;
     } catch (error) {
-        console.error(`❌ Erro ao verificar disponibilidade do jogo ${appid}:`, error.message);
-        return null;
+        console.error(`❌ Erro ao contar DLCs:`, error.message);
+        return 0;
     }
 }
 
-async function buscarAppIdPorNome(nomeJogo) {
+async function buscarSugestoesJogos(termo) {
+    if (!termo || termo.length === 0) {
+        return [
+            { name: 'Elden Ring', value: 'Elden Ring' },
+            { name: 'Counter-Strike 2', value: 'Counter-Strike 2' },
+            { name: 'Dying Light', value: 'Dying Light' },
+            { name: 'Stardew Valley', value: 'Stardew Valley' }
+        ];
+    }
     try {
-        const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(nomeJogo)}&l=portuguese&cc=BR&max=1`;
+        const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(termo)}&l=portuguese&cc=BR&max=50`;
         const data = await fetchWithTimeout(url, 8000);
         if (data.items && data.items.length > 0) {
-            const jogo = data.items[0];
-            return {
-                appid: jogo.id,
-                nome: jogo.name,
-                link: `https://store.steampowered.com/app/${jogo.id}`
-            };
-        }
-        return null;
-    } catch (error) {
-        console.error(`❌ Erro ao buscar AppID:`, error.message);
-        return null;
-    }
-}
-
-async function buscarListaDesejosSteam(steamId) {
-    try {
-        const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?key=${process.env.STEAM_KEY}&steamid=${steamId}`;
-        const data = await fetchWithTimeout(url, 8000);
-        if (data.response && data.response.items) {
-            return data.response.items.map(item => item.appid);
+            return data.items
+                .filter(item => item.type === 'game' || item.type === 'dlc')
+                .slice(0, 25)
+                .map(item => ({ name: item.name, value: item.name }));
         }
         return [];
     } catch (error) {
-        console.error(`❌ Erro ao buscar lista de desejos de ${steamId}:`, error.message);
+        console.error('❌ Erro ao buscar sugestões:', error);
         return [];
     }
 }
 
 // 🔹 ============================================
-// 🔹 LISTA /QUERO
-// 🔹 ============================================
-async function adicionarQuero(discordId, appid, nomeJogo, link) {
-    if (!db.listaQuero[discordId]) {
-        db.listaQuero[discordId] = [];
-    }
-    const jaExiste = db.listaQuero[discordId].some(item => item.appid === appid);
-    if (jaExiste) {
-        return { sucesso: false, motivo: 'ja_na_lista' };
-    }
-
-    const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
-    const apiKey = process.env.STEAM_KEY;
-    let naFamilia = false;
-    let dono = '';
-    for (const steamId of steamIds) {
-        try {
-            const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${apiKey}&steamid=${steamId}&include_appinfo=true&format=json`;
-            const data = await fetchWithTimeout(url, 8000);
-            if (data.response?.games) {
-                const temJogo = data.response.games.some(g => g.appid === appid);
-                if (temJogo) {
-                    naFamilia = true;
-                    dono = steamNames[steamId] || `Usuário ${steamId.substring(0, 8)}`;
-                    break;
-                }
-            }
-        } catch (error) {
-            console.error(`❌ Erro ao verificar ${steamId}:`, error.message);
-        }
-    }
-
-    if (naFamilia) {
-        return { sucesso: false, motivo: 'ja_na_familia', dono: dono };
-    }
-
-    db.listaQuero[discordId].push({
-        appid: appid,
-        nome: nomeJogo,
-        link: link,
-        adicionado_em: new Date().toISOString()
-    });
-    salvarDB(db);
-    return { sucesso: true };
-}
-
-function removerQuero(discordId, appid) {
-    if (!db.listaQuero[discordId]) return false;
-    const tamanhoAntes = db.listaQuero[discordId].length;
-    db.listaQuero[discordId] = db.listaQuero[discordId].filter(item => item.appid !== appid);
-    if (db.listaQuero[discordId].length < tamanhoAntes) {
-        salvarDB(db);
-        return true;
-    }
-    return false;
-}
-
-function listarQuero(discordId) {
-    if (!db.listaQuero[discordId] || db.listaQuero[discordId].length === 0) {
-        return [];
-    }
-    return db.listaQuero[discordId];
-}
-
-function jogoJaNotificadoPermanente(appid) {
-    if (!db.jogosNotificadosPermanentes) {
-        db.jogosNotificadosPermanentes = {};
-    }
-    return !!db.jogosNotificadosPermanentes[appid];
-}
-
-function registrarJogoNotificadoPermanente(appid, nomeJogo, steamId) {
-    if (!db.jogosNotificadosPermanentes) {
-        db.jogosNotificadosPermanentes = {};
-    }
-    db.jogosNotificadosPermanentes[appid] = {
-        nome: nomeJogo,
-        appid: appid,
-        data: new Date().toISOString(),
-        steamId: steamId || 'todos'
-    };
-    salvarDB(db);
-    console.log(`💾 Jogo ${nomeJogo} (${appid}) registrado como notificado permanentemente`);
-}
-
-async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorSteamId, compradorNome) {
-    console.log(`🔍 Verificando lista de desejos para ${jogoNome}...`);
-    try {
-        const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
-        for (const steamId of steamIds) {
-            if (steamId === compradorSteamId) continue;
-            const listaDesejos = await buscarListaDesejosSteam(steamId);
-            if (listaDesejos.includes(jogoAppid)) {
-                const discordId = discordUsers[steamId];
-                if (!discordId) continue;
-                try {
-                    const usuario = await client.users.fetch(discordId).catch(() => null);
-                    if (usuario) {
-                        await usuario.send(
-                            `🎮 **${jogoNome}** foi comprado por **${compradorNome}**!\n` +
-                            `📢 Este jogo estava na sua lista de desejos da Steam.\n` +
-                            `🔗 https://store.steampowered.com/app/${jogoAppid}`
-                        );
-                        console.log(`✅ DM enviada para ${usuario.username}: ${jogoNome} comprado por ${compradorNome}`);
-                    }
-                } catch (error) {
-                    console.error(`❌ Erro ao enviar DM para ${discordId}:`, error.message);
-                }
-            }
-        }
-    } catch (error) {
-        console.error('❌ Erro ao verificar lista de desejos:', error);
-    }
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarConquistas (com cache de jogos sem conquistas)
+// 🔹 FUNÇÃO: verificarConquistas (OTIMIZADA)
 // 🔹 ============================================
 async function verificarConquistas(steamId, games, mention, userName) {
     if (!games?.length) return;
-
     const channelConquistas = client.channels.cache.get(CHANNEL_CONQUISTAS);
     if (!channelConquistas) return;
 
@@ -664,7 +449,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
     if (!db.jogosRecentes[steamId]) db.jogosRecentes[steamId] = [];
 
     const jogosRecentes = [];
-
     const jogoAtual = await getCurrentGame(steamId);
     if (jogoAtual) {
         const jogo = games.find(g => g.appid === jogoAtual.gameid);
@@ -707,14 +491,12 @@ async function verificarConquistas(steamId, games, mention, userName) {
     }
 
     const jogosParaVerificar = jogosRecentes.slice(0, MAX_JOGOS_POR_USUARIO);
-
     if (!jogosParaVerificar.length) {
         console.log(`ℹ️ Nenhum jogo recente para ${userName}`);
         return;
     }
 
     console.log(`🔍 Verificando ${jogosParaVerificar.length} jogos para ${userName}...`);
-
     let novasConquistas = 0;
 
     for (const game of jogosParaVerificar) {
@@ -722,19 +504,16 @@ async function verificarConquistas(steamId, games, mention, userName) {
         const gameName = game.name || `Jogo ${appid}`;
 
         if (db.jogosSemConquistas[appid]) {
-            console.log(`   ⏭️ ${gameName} ignorado (marcado como sem conquistas)`);
+            console.log(`   ⏭️ ${gameName} ignorado (sem conquistas)`);
             continue;
         }
 
         try {
             const conquistas = await getAchievements(steamId, appid);
             if (!conquistas || conquistas.length === 0) {
-                db.jogosSemConquistas[appid] = {
-                    nome: gameName,
-                    data: new Date().toISOString()
-                };
+                db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString() };
                 salvarDB(db);
-                console.log(`   ⏭️ ${gameName} marcado como SEM CONQUISTAS (não será verificado novamente)`);
+                console.log(`   ⏭️ ${gameName} marcado como SEM CONQUISTAS`);
                 continue;
             }
 
@@ -767,12 +546,11 @@ async function verificarConquistas(steamId, games, mention, userName) {
                     console.log(`🎮 ${userName} +${novas.length} conquista(s) em ${gameName}! (${progresso})`);
 
                     const gameInfo = await getGameDetails(appid);
+
                     for (const conquista of novas.slice(0, MAX_CONQUISTAS_POR_JOGO)) {
                         const nomeConquista = await getAchievementName(steamId, appid, conquista.apiname);
                         const iconName = await buscarIconeConquista(appid, conquista.apiname);
-                        const iconUrl = iconName ?
-                            `https://shared.fastly.steamstatic.com/community_assets/images/apps/${appid}/${iconName}.jpg` :
-                            null;
+                        const iconUrl = iconName ? `https://shared.fastly.steamstatic.com/community_assets/images/apps/${appid}/${iconName}.jpg` : null;
 
                         const embed = new EmbedBuilder()
                             .setColor(0xFFD700)
@@ -788,14 +566,8 @@ async function verificarConquistas(steamId, games, mention, userName) {
                             .setFooter({ text: `+${novas.length} nova(s) conquista(s)` })
                             .setTimestamp();
 
-                        if (iconUrl) {
-                            embed.setImage(iconUrl);
-                        }
-
-                        await channelConquistas.send({
-                            content: `🎉 **NOVA CONQUISTA!**`,
-                            embeds: [embed]
-                        });
+                        if (iconUrl) embed.setImage(iconUrl);
+                        await channelConquistas.send({ content: `🎉 **NOVA CONQUISTA!**`, embeds: [embed] });
                     }
 
                     db.conquistas[steamId][appid] = {
@@ -808,11 +580,7 @@ async function verificarConquistas(steamId, games, mention, userName) {
             }
         } catch (error) {
             if (error.message && error.message.includes('HTTP 400')) {
-                db.jogosSemConquistas[appid] = {
-                    nome: gameName,
-                    data: new Date().toISOString(),
-                    erro: error.message
-                };
+                db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString() };
                 salvarDB(db);
                 console.log(`   ⏭️ ${gameName} marcado como SEM CONQUISTAS (erro 400)`);
             } else {
@@ -827,272 +595,7 @@ async function verificarConquistas(steamId, games, mention, userName) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÕES: verificarJogosCompradosQuero, verificarJogosCompradosFamiliaQuero, verificarJogosNaoLancadosQuero
-// 🔹 ============================================
-async function verificarJogosCompradosQuero() {
-    console.log(`🔄 Verificando jogos comprados da lista /quero...`);
-    try {
-        for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
-            if (!jogos || jogos.length === 0) continue;
-
-            const steamId = Object.keys(discordUsers).find(key => discordUsers[key] === discordId);
-            if (!steamId) continue;
-
-            const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${process.env.STEAM_KEY}&steamid=${steamId}&include_appinfo=true&format=json`;
-            const data = await fetchWithTimeout(url, 8000);
-            if (!data.response?.games) continue;
-
-            const jogosDoUsuario = data.response.games.map(g => g.appid);
-            let jogosRemovidos = 0;
-
-            for (const jogo of jogos) {
-                if (jogosDoUsuario.includes(jogo.appid)) {
-                    const removido = removerQuero(discordId, jogo.appid);
-                    if (removido) {
-                        jogosRemovidos++;
-                        console.log(`✅ ${jogo.nome} removido da lista /quero de ${discordId} (comprado!)`);
-                        try {
-                            const usuario = await client.users.fetch(discordId).catch(() => null);
-                            if (usuario) {
-                                await usuario.send(
-                                    `🎮 **${jogo.nome}** foi removido automaticamente da sua lista /quero!\n` +
-                                    `✅ Você já possui este jogo na biblioteca Steam.`
-                                );
-                            }
-                        } catch (error) {
-                            console.error(`❌ Erro ao enviar DM para ${discordId}:`, error.message);
-                        }
-                    }
-                }
-            }
-
-            if (jogosRemovidos > 0) {
-                console.log(`📊 ${jogosRemovidos} jogo(s) removido(s) da lista /quero de ${discordId}`);
-            }
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-    } catch (error) {
-        console.error('❌ Erro ao verificar jogos comprados da lista /quero:', error);
-    }
-}
-
-async function verificarJogosCompradosFamiliaQuero() {
-    console.log(`🔄 Verificando jogos da família comprados da lista /quero...`);
-    try {
-        const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
-        const apiKey = process.env.STEAM_KEY;
-        const jogosDaFamilia = new Set();
-        for (const steamId of steamIds) {
-            try {
-                const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${apiKey}&steamid=${steamId}&include_appinfo=true&format=json`;
-                const data = await fetchWithTimeout(url, 8000);
-                if (data.response?.games) {
-                    for (const game of data.response.games) {
-                        jogosDaFamilia.add(game.appid);
-                    }
-                }
-            } catch (error) {
-                console.error(`❌ Erro ao buscar jogos de ${steamId}:`, error.message);
-            }
-        }
-        console.log(`📊 Família possui ${jogosDaFamilia.size} jogos únicos`);
-
-        for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
-            if (!jogos || jogos.length === 0) continue;
-            let jogosRemovidos = 0;
-            for (const jogo of jogos) {
-                if (jogosDaFamilia.has(jogo.appid)) {
-                    const removido = removerQuero(discordId, jogo.appid);
-                    if (removido) {
-                        jogosRemovidos++;
-                        console.log(`✅ ${jogo.nome} removido da lista /quero de ${discordId} (jogo na família!)`);
-                        try {
-                            const usuario = await client.users.fetch(discordId).catch(() => null);
-                            if (usuario) {
-                                await usuario.send(
-                                    `🎮 **${jogo.nome}** foi removido automaticamente da sua lista /quero!\n` +
-                                    `✅ Alguém da família já possui este jogo na Steam.`
-                                );
-                            }
-                        } catch (error) {
-                            console.error(`❌ Erro ao enviar DM para ${discordId}:`, error.message);
-                        }
-                    }
-                }
-            }
-            if (jogosRemovidos > 0) {
-                console.log(`📊 ${jogosRemovidos} jogo(s) removido(s) da lista /quero de ${discordId} (família)`);
-            }
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-    } catch (error) {
-        console.error('❌ Erro ao verificar jogos da família na lista /quero:', error);
-    }
-}
-
-async function verificarJogosNaoLancadosQuero() {
-    console.log(`🔄 Verificando jogos não lançados da lista /quero...`);
-    try {
-        for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
-            if (!jogos || jogos.length === 0) continue;
-            const usuario = await client.users.fetch(discordId).catch(() => null);
-            if (!usuario) continue;
-            for (const jogo of jogos) {
-                if (jogoJaNotificadoPermanente(jogo.appid)) {
-                    console.log(`ℹ️ Jogo ${jogo.appid} (${jogo.nome}) já foi notificado anteriormente.`);
-                    continue;
-                }
-                const info = await verificarDisponibilidadeJogo(jogo.appid);
-                if (!info) continue;
-                const deveNotificar = info.disponivel || info.preVenda;
-                if (deveNotificar) {
-                    const hoje = new Date().toLocaleDateString('pt-BR');
-                    const chaveNotificacao = `lancamento_${discordId}_${jogo.appid}`;
-                    if (!db.jogosNotificados) db.jogosNotificados = {};
-                    if (!db.jogosNotificados[chaveNotificacao]) {
-                        db.jogosNotificados[chaveNotificacao] = {};
-                    }
-                    if (db.jogosNotificados[chaveNotificacao][hoje]) {
-                        continue;
-                    }
-                    try {
-                        const embed = new EmbedBuilder()
-                            .setColor(0x00FF00)
-                            .setTitle(`🎮 **${info.nome}** está disponível!`)
-                            .setURL(info.link)
-                            .setDescription(
-                                `📢 **${info.nome}** agora está disponível para compra na Steam!\n\n` +
-                                `${info.preVenda ? '🛒 **Pré-venda disponível!**' : '✅ **Jogo lançado!**'}\n` +
-                                `📅 Data de lançamento: ${info.dataLancamento}\n\n` +
-                                `🔗 **[Comprar na Steam](${info.link})**`
-                            )
-                            .setThumbnail(`https://cdn.cloudflare.steamstatic.com/steam/apps/${jogo.appid}/header.jpg`)
-                            .setFooter({ text: 'Steam Família - Lançamentos /quero' })
-                            .setTimestamp();
-
-                        await usuario.send({ embeds: [embed] });
-                        console.log(`✅ DM enviada para ${usuario.username}: ${info.nome} disponível!`);
-                        removerQuero(discordId, jogo.appid);
-                        db.jogosNotificados[chaveNotificacao][hoje] = true;
-                        registrarJogoNotificadoPermanente(jogo.appid, info.nome, discordId);
-                        salvarDB(db);
-                    } catch (error) {
-                        console.error(`❌ Erro ao enviar DM para ${usuario.username}:`, error.message);
-                    }
-                }
-            }
-        }
-    } catch (error) {
-        console.error('❌ Erro ao verificar jogos não lançados:', error);
-    }
-}
-
-// 🔹 ============================================
-// 🔹 FUNÇÕES: verificarCompatibilidadeFamilia, contarDLCs, buscarSugestoesJogos
-// 🔹 ============================================
-async function verificarCompatibilidadeFamilia(appid) {
-    if (compatibilidadeCache[appid] !== undefined) {
-        return compatibilidadeCache[appid];
-    }
-    if (JOGOS_INCOMPATIVEIS[appid]) {
-        console.log(`📋 Lista manual: Jogo ${appid} NÃO é compatível`);
-        compatibilidadeCache[appid] = false;
-        return false;
-    }
-    let resultado = true;
-    try {
-        const url = `https://steamdb.info/api/v1/appdetails/?appid=${appid}`;
-        const data = await fetchWithTimeout(url, 8000);
-        if (data && data.data) {
-            const appData = data.data;
-            const excludeFromFamilySharing = appData.exclude_from_family_sharing || false;
-            const isFree = appData.is_free || false;
-            const requiresAccount = appData.requires_account || false;
-            if (excludeFromFamilySharing || isFree || requiresAccount) {
-                resultado = false;
-                console.log(`❌ SteamDB: Jogo ${appid} NÃO é compatível`);
-                compatibilidadeCache[appid] = resultado;
-                return resultado;
-            }
-        }
-    } catch (error) {
-        console.log(`⚠️ SteamDB falhou: ${error.message}`);
-    }
-    console.log(`✅ Jogo ${appid} é compatível com Família Steam`);
-    compatibilidadeCache[appid] = true;
-    return true;
-}
-
-async function contarDLCs(appid) {
-    try {
-        const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
-        const data = await fetchWithTimeout(url, 8000);
-        if (data[appid]?.success) {
-            const gameData = data[appid].data;
-            if (gameData.dlc && gameData.dlc.length > 0) {
-                return gameData.dlc.length;
-            }
-        }
-        return 0;
-    } catch (error) {
-        console.error(`❌ Erro ao contar DLCs:`, error.message);
-        return 0;
-    }
-}
-
-async function buscarSugestoesJogos(termo) {
-    try {
-        if (!termo || termo.length === 0) {
-            return [
-                { name: 'Elden Ring', value: 'Elden Ring' },
-                { name: 'Counter-Strike 2', value: 'Counter-Strike 2' },
-                { name: 'Dying Light', value: 'Dying Light' },
-                { name: 'Sonic Frontiers', value: 'Sonic Frontiers' },
-                { name: 'Stardew Valley', value: 'Stardew Valley' }
-            ];
-        }
-        const termoLower = termo.toLowerCase();
-        const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(termo)}&l=portuguese&cc=BR&max=50`;
-        const data = await fetchWithTimeout(url, 8000);
-        if (data.items && data.items.length > 0) {
-            const jogos = data.items
-                .filter(item => {
-                    const nomeLower = item.name.toLowerCase();
-                    return (item.type === 'game' || item.type === 'dlc') &&
-                        nomeLower.startsWith(termoLower);
-                })
-                .slice(0, 25)
-                .map(item => ({ name: item.name, value: item.name }));
-            if (jogos.length === 0) {
-                const jogosContem = data.items
-                    .filter(item => {
-                        const nomeLower = item.name.toLowerCase();
-                        return (item.type === 'game' || item.type === 'dlc') &&
-                            nomeLower.includes(termoLower);
-                    })
-                    .slice(0, 15)
-                    .map(item => ({ name: item.name, value: item.name }));
-                if (jogosContem.length > 0) {
-                    return jogosContem;
-                }
-            }
-            return jogos;
-        }
-        return [
-            { name: 'Elden Ring', value: 'Elden Ring' },
-            { name: 'Counter-Strike 2', value: 'Counter-Strike 2' },
-            { name: 'Dying Light', value: 'Dying Light' },
-            { name: 'Sonic Frontiers', value: 'Sonic Frontiers' },
-            { name: 'Stardew Valley', value: 'Stardew Valley' }
-        ];
-    } catch (error) {
-        console.error('❌ Erro ao buscar sugestões:', error);
-        return [];
-    }
-}
-
-// 🔹 ============================================
-// 🔹 RANKING E FUNÇÕES RELACIONADAS
+// 🔹 FUNÇÕES: RANKING E COMANDOS BÁSICOS
 // 🔹 ============================================
 function gerarRanking() {
     const rankingArray = Object.values(ranking).sort((a, b) => b.jogos - a.jogos);
@@ -1121,18 +624,12 @@ async function enviarRanking() {
     const embedRanking = gerarRanking();
     const channel = client.channels.cache.get(CHANNEL_RANKING);
     if (!channel) return;
-
     try {
         if (ultimaMensagemRankingId) {
             try {
                 const mensagemAntiga = await channel.messages.fetch(ultimaMensagemRankingId);
-                if (mensagemAntiga) {
-                    await mensagemAntiga.delete();
-                    console.log(`🗑️ Mensagem de ranking anterior apagada: ${ultimaMensagemRankingId}`);
-                }
-            } catch (error) {
-                console.log(`ℹ️ Mensagem anterior não encontrada, continuando...`);
-            }
+                if (mensagemAntiga) await mensagemAntiga.delete();
+            } catch (error) {}
         }
         const novaMensagem = await channel.send({ embeds: [embedRanking] });
         ultimaMensagemRankingId = novaMensagem.id;
@@ -1144,21 +641,9 @@ async function enviarRanking() {
     }
 }
 
-async function verificarSuporteFamilia(appid) {
-    try {
-        const url = `https://store.steampowered.com/app/${appid}`;
-        const data = await fetchWithTimeout(url, 8000);
-        const html = typeof data === 'string' ? data : JSON.stringify(data);
-        const temCompartilhamento = html.includes('Compartilhamento em família') || html.includes('Family Sharing');
-        const naoCompativel = html.includes('Compartilhamento em família não disponível') || html.includes('Family Sharing not available');
-        if (temCompartilhamento && !naoCompativel) return true;
-        if (naoCompativel) return false;
-        return true;
-    } catch (error) {
-        return true;
-    }
-}
-
+// 🔹 ============================================
+// 🔹 FUNÇÃO PRINCIPAL: checkSteamGames (SEM PROMOÇÕES)
+// 🔹 ============================================
 async function checkSteamGames() {
     const inicio = Date.now();
     console.log(`🔄 [${new Date().toLocaleTimeString()}] VERIFICANDO...`);
@@ -1172,7 +657,6 @@ async function checkSteamGames() {
         const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
         const apiKey = process.env.STEAM_KEY;
         const channelNotificacoes = client.channels.cache.get(CHANNEL_NOTIFICACOES);
-
         if (!channelNotificacoes) {
             console.error('❌ Canal de notificações não encontrado!');
             return;
@@ -1184,7 +668,6 @@ async function checkSteamGames() {
             try {
                 const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${apiKey}&steamid=${trimmedId}&include_appinfo=true&format=json`;
                 const data = await fetchWithTimeout(url, 10000);
-
                 if (!data.response?.games) continue;
 
                 const currentGames = data.response.games.map(g => ({
@@ -1209,37 +692,11 @@ async function checkSteamGames() {
 
                     if (newGames.length) {
                         console.log(`🎮 ${userName} +${newGames.length} novo(s) jogo(s)!`);
-
                         for (const game of newGames) {
                             const appid = game.appid;
                             const nome = game.name;
-
-                            await verificarListaDesejosComprados(appid, nome, trimmedId, userName);
-
-                            for (const [discordIdQuero, jogosQuero] of Object.entries(db.listaQuero)) {
-                                if (!jogosQuero || jogosQuero.length === 0) continue;
-                                const jogoNaLista = jogosQuero.find(j => j.appid === appid);
-                                if (jogoNaLista) {
-                                    const removido = removerQuero(discordIdQuero, appid);
-                                    if (removido) {
-                                        console.log(`✅ ${nome} removido da lista /quero de ${discordIdQuero} (comprado por ${userName})`);
-                                        try {
-                                            const usuario = await client.users.fetch(discordIdQuero).catch(() => null);
-                                            if (usuario) {
-                                                await usuario.send(
-                                                    `🎮 **${nome}** foi removido automaticamente da sua lista /quero!\n` +
-                                                    `✅ **${userName}** acabou de adquirir este jogo na Steam.`
-                                                );
-                                            }
-                                        } catch (error) {
-                                            console.error(`❌ Erro ao enviar DM para ${discordIdQuero}:`, error.message);
-                                        }
-                                    }
-                                }
-                            }
-
                             const link = `https://store.steampowered.com/app/${appid}`;
-                            const isCompatible = await verificarSuporteFamilia(appid);
+                            const isCompatible = await verificarCompatibilidadeFamilia(appid);
                             if (isCompatible) {
                                 await channelNotificacoes.send(
                                     `@everyone 🎉 ${mention} comprou o jogo: **${nome}**\n🔗 ${link}\n✅ **Compatível com Família Steam!**`
@@ -1260,14 +717,12 @@ async function checkSteamGames() {
             }
         }
 
-        // Removida a verificação de promoções
-
         if (!primeiraVerificacaoConcluida) {
             primeiraVerificacaoConcluida = true;
             console.log('✅ PRIMEIRA VERIFICAÇÃO CONCLUÍDA!');
             console.log('🔍 Monitorando NOVAS conquistas em tempo real!');
             salvarDB(db);
-            console.log('✅ SISTEMA INICIALIZADO! Conquistas salvas. Monitorando novas conquistas!');
+            console.log('✅ SISTEMA INICIALIZADO!');
         }
 
         const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
@@ -1279,7 +734,7 @@ async function checkSteamGames() {
 }
 
 // 🔹 ============================================
-// 🔹 REGISTRO DE COMANDOS
+// 🔹 COMANDOS SLASH E INTERAÇÕES
 // 🔹 ============================================
 async function registrarComandos() {
     try {
@@ -1318,10 +773,6 @@ async function registrarComandos() {
                 description: 'Lista todos os jogos da sua lista /quero'
             },
             {
-                name: 'quero-listar-resumido',
-                description: 'Lista rapidamente os jogos da sua lista /quero (sem verificar preços)'
-            },
-            {
                 name: 'quero-remover',
                 description: 'Remove um jogo da sua lista /quero',
                 options: [
@@ -1334,18 +785,12 @@ async function registrarComandos() {
                 ]
             },
             {
-                name: 'limparnotificados',
-                description: '[DONO] Limpa a lista de jogos notificados permanentemente'
-            },
-            {
                 name: 'dbstatus',
                 description: '[DONO] Mostra o status do banco de dados'
             }
         ];
-
         await client.application.commands.set(commands);
         console.log('✅ Comandos registrados GLOBALMENTE!');
-
         const guild = client.guilds.cache.first();
         if (guild) {
             await guild.commands.set(commands);
@@ -1356,9 +801,6 @@ async function registrarComandos() {
     }
 }
 
-// 🔹 ============================================
-// 🔹 EVENTOS DE INTERAÇÃO
-// 🔹 ============================================
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isAutocomplete()) {
         if (interaction.commandName === 'tem') {
@@ -1376,7 +818,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // /tem
+    // Comando /tem
     if (interaction.commandName === 'tem') {
         const input = interaction.options.getString('jogo');
         await interaction.deferReply({ ephemeral: true });
@@ -1384,18 +826,11 @@ client.on('interactionCreate', async (interaction) => {
             let jogo = null;
             if (input.includes('store.steampowered.com/app/')) {
                 const appid = extrairAppIdDaUrl(input);
-                if (appid) {
-                    jogo = await buscarJogoPorAppId(appid);
-                }
+                if (appid) jogo = await buscarJogoPorAppId(appid);
             }
+            if (!jogo) jogo = await buscarJogoSteam(input);
             if (!jogo) {
-                jogo = await buscarJogoSteam(input);
-            }
-            if (!jogo) {
-                await interaction.editReply({
-                    content: `❌ Não encontrei o jogo **${input}** na Steam.\n💡 Verifique o nome ou link e tente novamente.`
-                });
-                return;
+                return await interaction.editReply({ content: `❌ Não encontrei o jogo **${input}** na Steam.` });
             }
 
             const donos = await verificarJogoFamilia(jogo.appid);
@@ -1409,31 +844,11 @@ client.on('interactionCreate', async (interaction) => {
                 .setFooter({ text: 'Steam Família - Consulta' })
                 .setTimestamp();
 
-            if (jogo.capa) {
-                embed.setThumbnail(jogo.capa);
-            }
-
+            if (jogo.capa) embed.setThumbnail(jogo.capa);
             if (!compativel) {
-                embed.addFields({
-                    name: '⚠️ ATENÇÃO',
-                    value: '⚠️ **Este jogo NÃO tem suporte para Compartilhamento em Família!**\n\nVerifique a página do jogo na Steam para mais informações.',
-                    inline: false
-                });
+                embed.addFields({ name: '⚠️ ATENÇÃO', value: '⚠️ **Este jogo NÃO tem suporte para Compartilhamento em Família!**', inline: false });
             }
-
-            if (totalDLCs > 0) {
-                embed.addFields({
-                    name: '📦 Conteúdos Adicionais (DLCs)',
-                    value: `Este jogo possui **${totalDLCs}** DLC(s) disponível(is) na Steam.`,
-                    inline: false
-                });
-            } else {
-                embed.addFields({
-                    name: '📦 Conteúdos Adicionais (DLCs)',
-                    value: 'Este jogo não possui DLCs listadas.',
-                    inline: false
-                });
-            }
+            embed.addFields({ name: '📦 Conteúdos Adicionais (DLCs)', value: totalDLCs > 0 ? `Este jogo possui **${totalDLCs}** DLC(s).` : 'Este jogo não possui DLCs listadas.', inline: false });
 
             if (donos.length > 0) {
                 let descricao = `🎮 **Encontrado na família!**\n👤 **${donos.length} membro(s) possui(em):**\n\n`;
@@ -1443,26 +858,16 @@ client.on('interactionCreate', async (interaction) => {
                 });
                 embed.setDescription(descricao);
             } else {
-                embed.setDescription(
-                    `😕 **Nenhum membro da família possui este jogo.**\n\n` +
-                    `💡 **Sugestões:**\n` +
-                    `• Adicione à lista de desejos\n` +
-                    `• Combine com a família para comprar juntos\n` +
-                    `• Aguarde uma promoção`
-                );
+                embed.setDescription(`😕 **Nenhum membro da família possui este jogo.**`);
             }
-
             await interaction.editReply({ embeds: [embed] });
         } catch (error) {
             console.error('❌ Erro no comando /tem:', error);
-            await interaction.editReply({
-                content: `❌ Ocorreu um erro ao buscar o jogo. Tente novamente mais tarde.\nErro: ${error.message}`
-            });
+            await interaction.editReply({ content: `❌ Ocorreu um erro ao buscar o jogo. Tente novamente.` });
         }
-        return;
     }
 
-    // /ranking
+    // Comando /ranking
     if (interaction.commandName === 'ranking') {
         await interaction.deferReply({ ephemeral: true });
         try {
@@ -1472,22 +877,19 @@ client.on('interactionCreate', async (interaction) => {
             console.error('❌ Erro no comando /ranking:', error);
             await interaction.editReply({ content: '❌ Ocorreu um erro ao gerar o ranking.' });
         }
-        return;
     }
 
-    // /quero
+    // Comando /quero (adicionar)
     if (interaction.commandName === 'quero') {
         const nomeJogo = interaction.options.getString('jogo');
         await interaction.deferReply({ ephemeral: true });
         try {
-            const jogo = await buscarAppIdPorNome(nomeJogo);
+            const jogo = await buscarJogoSteam(nomeJogo);
             if (!jogo) {
-                await interaction.editReply({
-                    content: `❌ Não encontrei o jogo **${nomeJogo}** na Steam. Verifique o nome e tente novamente.`
-                });
-                return;
+                return await interaction.editReply({ content: `❌ Não encontrei o jogo **${nomeJogo}** na Steam.` });
             }
 
+            // Verifica se já possui
             const steamId = Object.keys(discordUsers).find(key => discordUsers[key] === interaction.user.id);
             if (steamId) {
                 const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${process.env.STEAM_KEY}&steamid=${steamId}&include_appinfo=true&format=json`;
@@ -1495,275 +897,125 @@ client.on('interactionCreate', async (interaction) => {
                 if (data.response?.games) {
                     const temJogo = data.response.games.some(g => g.appid === jogo.appid);
                     if (temJogo) {
-                        await interaction.editReply({
-                            content: `ℹ️ Você **já possui** **${jogo.nome}** na sua biblioteca Steam!`
-                        });
-                        return;
+                        return await interaction.editReply({ content: `ℹ️ Você **já possui** **${jogo.nome}** na sua biblioteca!` });
                     }
                 }
             }
 
-            const resultado = await adicionarQuero(interaction.user.id, jogo.appid, jogo.nome, jogo.link);
-            if (!resultado.sucesso) {
-                if (resultado.motivo === 'ja_na_lista') {
-                    await interaction.editReply({
-                        content: `ℹ️ O jogo **${jogo.nome}** já está na sua lista /quero!`
-                    });
-                } else if (resultado.motivo === 'ja_na_familia') {
-                    await interaction.editReply({
-                        content: `ℹ️ O jogo **${jogo.nome}** **já está na família!**\n👤 ${resultado.dono} já possui este jogo.`
-                    });
-                }
-                return;
+            // Verifica se já está na lista
+            if (!db.listaQuero[interaction.user.id]) db.listaQuero[interaction.user.id] = [];
+            if (db.listaQuero[interaction.user.id].some(item => item.appid === jogo.appid)) {
+                return await interaction.editReply({ content: `ℹ️ O jogo **${jogo.nome}** já está na sua lista /quero!` });
             }
 
-            const infoDisponibilidade = await verificarDisponibilidadeJogo(jogo.appid);
-            let mensagem = `✅ **${jogo.nome}** adicionado à sua lista /quero!\n\n🔗 ${jogo.link}\n\n`;
-            if (infoDisponibilidade) {
-                if (infoDisponibilidade.disponivel) {
-                    mensagem += `🎉 **ATENÇÃO!** Este jogo **JÁ ESTÁ DISPONÍVEL PARA COMPRA!**\n`;
-                    mensagem += `📅 Data de lançamento: ${infoDisponibilidade.dataLancamento}`;
-                } else if (infoDisponibilidade.preVenda) {
-                    mensagem += `🛒 **ATENÇÃO!** Este jogo **ESTÁ EM PRÉ-VENDA!**\n`;
-                    mensagem += `📅 Data de lançamento: ${infoDisponibilidade.dataLancamento}`;
-                } else if (infoDisponibilidade.aindaNaoLancado) {
-                    mensagem += `📢 Você será notificado(a) por DM quando este jogo estiver disponível para compra.\n`;
-                    mensagem += `📅 Lançamento previsto: ${infoDisponibilidade.dataLancamento}`;
-                } else {
-                    mensagem += `📢 Você será notificado(a) por DM quando este jogo estiver disponível para compra!`;
-                }
-            } else {
-                mensagem += `📢 Você será notificado(a) por DM quando este jogo estiver disponível para compra!`;
+            // Verifica se alguém da família tem
+            const donos = await verificarJogoFamilia(jogo.appid);
+            if (donos.length > 0) {
+                return await interaction.editReply({ content: `ℹ️ O jogo **${jogo.nome}** já está na família!` });
             }
-            await interaction.editReply({ content: mensagem });
+
+            db.listaQuero[interaction.user.id].push({
+                appid: jogo.appid,
+                nome: jogo.nome,
+                link: jogo.url,
+                adicionado_em: new Date().toISOString()
+            });
+            salvarDB(db);
+            await interaction.editReply({ content: `✅ **${jogo.nome}** adicionado à sua lista /quero!` });
         } catch (error) {
             console.error('❌ Erro no comando /quero:', error);
-            await interaction.editReply({ content: '❌ Ocorreu um erro ao adicionar o jogo à lista.' });
+            await interaction.editReply({ content: '❌ Ocorreu um erro ao adicionar o jogo.' });
         }
-        return;
     }
 
-    // /quero-listar
+    // Comando /quero-listar
     if (interaction.commandName === 'quero-listar') {
         await interaction.deferReply({ ephemeral: true });
         try {
-            const lista = listarQuero(interaction.user.id);
+            const lista = db.listaQuero[interaction.user.id] || [];
             if (lista.length === 0) {
-                await interaction.editReply({
-                    content: '📭 Sua lista /quero está vazia. Use `/quero [nome do jogo]` para adicionar jogos.'
-                });
-                return;
-            }
-
-            const MAX_JOGOS_EXIBIR = 20;
-            const jogosParaExibir = lista.slice(0, MAX_JOGOS_EXIBIR);
-            const totalJogos = lista.length;
-
-            const jogosInfo = await Promise.all(
-                jogosParaExibir.map(async (jogo) => {
-                    try {
-                        const [preco, disponivel] = await Promise.all([
-                            verificarPrecoJogo(jogo.appid).catch(() => null),
-                            verificarDisponibilidadeJogo(jogo.appid).catch(() => null)
-                        ]);
-                        let status = '⏳ Aguardando...';
-                        let statusEmoji = '🟡';
-                        if (preco && preco.emPromocao) {
-                            status = `🟢 EM PROMOÇÃO! (${preco.desconto}% OFF)`;
-                            statusEmoji = '🟢';
-                        } else if (disponivel && (disponivel.disponivel || disponivel.preVenda)) {
-                            status = '🟢 DISPONÍVEL!';
-                            statusEmoji = '🟢';
-                        } else if (disponivel && disponivel.aindaNaoLancado) {
-                            status = `⏳ Lançamento: ${disponivel.dataLancamento}`;
-                            statusEmoji = '🔵';
-                        }
-                        return { ...jogo, status, statusEmoji, preco: preco?.precoAtual || 'N/A' };
-                    } catch (error) {
-                        return { ...jogo, status: '❌ Erro ao verificar', statusEmoji: '❌', preco: 'N/A' };
-                    }
-                })
-            );
-
-            const embed = new EmbedBuilder()
-                .setColor(0x00AE86)
-                .setTitle(`📋 Sua lista /quero (${totalJogos} jogos)`)
-                .setDescription(`Mostrando ${Math.min(totalJogos, MAX_JOGOS_EXIBIR)} jogos${totalJogos > MAX_JOGOS_EXIBIR ? ` (${totalJogos - MAX_JOGOS_EXIBIR} não exibidos)` : ''}`)
-                .setFooter({ text: 'Steam Família - Lista /quero' })
-                .setTimestamp();
-
-            let descricao = '';
-            for (let i = 0; i < jogosInfo.length; i++) {
-                const jogo = jogosInfo[i];
-                descricao += `${jogo.statusEmoji} **${i + 1}.** [${jogo.nome}](${jogo.link})\n`;
-                descricao += `   📊 Status: ${jogo.status}\n`;
-                if (jogo.preco !== 'N/A') {
-                    descricao += `   💰 Preço: ${jogo.preco}\n`;
-                }
-                descricao += '\n';
-            }
-
-            if (descricao.length > 4000) {
-                const partes = descricao.match(/[\s\S]{1,4000}/g) || [];
-                await interaction.editReply({
-                    content: `📋 **Sua lista /quero (${totalJogos} jogos)**\n*(Lista muito longa, enviando em partes)*`
-                });
-                for (let i = 0; i < partes.length; i++) {
-                    const embedParte = new EmbedBuilder()
-                        .setColor(0x00AE86)
-                        .setDescription(partes[i])
-                        .setFooter({ text: `Steam Família - Lista /quero (Parte ${i + 1}/${partes.length})` });
-                    await interaction.followUp({ embeds: [embedParte], ephemeral: true });
-                }
-            } else {
-                embed.setDescription(descricao);
-                await interaction.editReply({ embeds: [embed] });
-            }
-        } catch (error) {
-            console.error('❌ Erro no comando /quero-listar:', error);
-            await interaction.editReply({
-                content: '❌ Ocorreu um erro ao listar os jogos da sua lista /quero. Tente novamente mais tarde.'
-            });
-        }
-        return;
-    }
-
-    // /quero-listar-resumido
-    if (interaction.commandName === 'quero-listar-resumido') {
-        await interaction.deferReply({ ephemeral: true });
-        try {
-            const lista = listarQuero(interaction.user.id);
-            if (lista.length === 0) {
-                await interaction.editReply({ content: '📭 Sua lista /quero está vazia.' });
-                return;
+                return await interaction.editReply({ content: '📭 Sua lista /quero está vazia.' });
             }
             const embed = new EmbedBuilder()
                 .setColor(0x00AE86)
                 .setTitle(`📋 Sua lista /quero (${lista.length} jogos)`)
-                .setDescription(lista.map((jogo, i) => `**${i + 1}.** [${jogo.nome}](${jogo.link})`).join('\n'))
-                .setFooter({ text: 'Use /quero-listar para ver detalhes' })
+                .setDescription(lista.map((jogo, i) => `**${i+1}.** [${jogo.nome}](${jogo.link})`).join('\n'))
+                .setFooter({ text: 'Steam Família - Lista /quero' })
                 .setTimestamp();
-            if (embed.data.description && embed.data.description.length > 4000) {
-                await interaction.editReply({
-                    content: `📋 **Sua lista /quero (${lista.length} jogos)**\n${lista.map((jogo, i) => `${i + 1}. ${jogo.nome}`).join('\n')}`
-                });
+            if (embed.data.description.length > 4000) {
+                await interaction.editReply({ content: `📋 **Sua lista /quero (${lista.length} jogos)**\n${lista.map((jogo, i) => `${i+1}. ${jogo.nome}`).join('\n')}` });
             } else {
                 await interaction.editReply({ embeds: [embed] });
             }
         } catch (error) {
-            console.error('❌ Erro no comando /quero-listar-resumido:', error);
+            console.error('❌ Erro no comando /quero-listar:', error);
             await interaction.editReply({ content: '❌ Ocorreu um erro ao listar os jogos.' });
         }
-        return;
     }
 
-    // /quero-remover
+    // Comando /quero-remover
     if (interaction.commandName === 'quero-remover') {
         const nomeJogo = interaction.options.getString('jogo');
         await interaction.deferReply({ ephemeral: true });
         try {
-            const jogo = await buscarAppIdPorNome(nomeJogo);
+            const jogo = await buscarJogoSteam(nomeJogo);
             if (!jogo) {
-                await interaction.editReply({
-                    content: `❌ Não encontrei o jogo **${nomeJogo}** na Steam.`
-                });
-                return;
+                return await interaction.editReply({ content: `❌ Não encontrei o jogo **${nomeJogo}** na Steam.` });
             }
-            const removido = removerQuero(interaction.user.id, jogo.appid);
-            if (!removido) {
-                await interaction.editReply({
-                    content: `ℹ️ O jogo **${jogo.nome}** não estava na sua lista /quero.`
-                });
-                return;
+            const lista = db.listaQuero[interaction.user.id] || [];
+            const index = lista.findIndex(item => item.appid === jogo.appid);
+            if (index === -1) {
+                return await interaction.editReply({ content: `ℹ️ O jogo **${jogo.nome}** não estava na sua lista /quero.` });
             }
-            await interaction.editReply({ content: `✅ **${jogo.nome}** foi removido da sua lista /quero!` });
+            lista.splice(index, 1);
+            db.listaQuero[interaction.user.id] = lista;
+            salvarDB(db);
+            await interaction.editReply({ content: `✅ **${jogo.nome}** removido da sua lista /quero!` });
         } catch (error) {
             console.error('❌ Erro no comando /quero-remover:', error);
-            await interaction.editReply({ content: '❌ Ocorreu um erro ao remover o jogo da lista.' });
+            await interaction.editReply({ content: '❌ Ocorreu um erro ao remover o jogo.' });
         }
-        return;
     }
 
-    // /limparnotificados
-    if (interaction.commandName === 'limparnotificados') {
-        if (interaction.user.id !== DONO_ID) {
-            await interaction.reply({ content: '❌ Apenas o dono pode usar este comando.', ephemeral: true });
-            return;
-        }
-        await interaction.deferReply({ ephemeral: true });
-        try {
-            db.jogosNotificadosPermanentes = {};
-            salvarDB(db);
-            await interaction.editReply({
-                content: '✅ Lista de jogos notificados permanentemente foi limpa!'
-            });
-        } catch (error) {
-            console.error('❌ Erro no comando /limparnotificados:', error);
-            await interaction.editReply({ content: '❌ Ocorreu um erro ao limpar a lista.' });
-        }
-        return;
-    }
-
-    // /dbstatus
+    // Comando /dbstatus (somente dono)
     if (interaction.commandName === 'dbstatus') {
         if (interaction.user.id !== DONO_ID) {
-            await interaction.reply({ content: '❌ Apenas o dono pode usar este comando.', ephemeral: true });
-            return;
+            return await interaction.reply({ content: '❌ Apenas o dono pode usar este comando.', ephemeral: true });
         }
         await interaction.deferReply({ ephemeral: true });
         try {
             const totalQuero = Object.values(db.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
             const totalSteamLinks = Object.keys(db.steamLinks).length;
-            const totalNotificados = Object.keys(db.jogosNotificadosPermanentes).length;
+            const totalNotificados = Object.keys(db.jogosSemConquistas).length;
             let mensagem = `📊 **Status do Banco de Dados:**\n\n`;
             mensagem += `📋 Lista /quero: **${totalQuero}** jogos\n`;
             mensagem += `🔗 Steam Links: **${totalSteamLinks}** usuários\n`;
-            mensagem += `📢 Jogos notificados: **${totalNotificados}** jogos\n`;
+            mensagem += `🚫 Jogos sem conquistas: **${totalNotificados}**\n`;
             mensagem += `💾 Arquivo: ${DB_FILE}\n`;
             mensagem += `📅 Última atualização: ${new Date().toLocaleString()}`;
-
-            if (totalQuero > 0) {
-                mensagem += `\n\n📋 **Jogos na lista /quero:**\n`;
-                for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
-                    if (jogos.length > 0) {
-                        const usuario = await client.users.fetch(discordId).catch(() => null);
-                        const nome = usuario ? usuario.username : discordId;
-                        mensagem += `\n👤 ${nome}: ${jogos.map(j => j.nome).join(', ')}`;
-                    }
-                }
-            }
             await interaction.editReply({ content: mensagem });
         } catch (error) {
             console.error('❌ Erro no comando /dbstatus:', error);
             await interaction.editReply({ content: '❌ Ocorreu um erro ao verificar o banco de dados.' });
         }
-        return;
     }
 });
 
 // 🔹 ============================================
-// 🔹 MENSAGENS DE TEXTO
+// 🔹 EVENTO: MENSAGENS (COMANDO !resetranking)
 // 🔹 ============================================
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
-
     if (message.content.toLowerCase() === '!resetranking') {
         if (message.author.id !== DONO_ID) {
-            await message.reply({ content: '❌ Você não tem permissão para usar este comando!', ephemeral: true });
-            return;
+            return await message.reply({ content: '❌ Você não tem permissão!', ephemeral: true });
         }
-
-        await message.reply({
-            content: '⚠️ Tem certeza que quer resetar o ranking? Digite `!confirmar` em até 30 segundos.',
-            ephemeral: true
-        });
-
+        await message.reply({ content: '⚠️ Digite `!confirmar` em até 30 segundos para resetar o ranking.', ephemeral: true });
         const coletor = message.channel.createMessageCollector({
             filter: m => m.author.id === message.author.id && m.content.toLowerCase() === '!confirmar',
             max: 1,
             time: 30000
         });
-
         coletor.on('collect', async () => {
             ranking = JSON.parse(JSON.stringify(rankingPadrao));
             db.ranking = ranking;
@@ -1771,47 +1023,27 @@ client.on('messageCreate', async (message) => {
             await enviarRanking();
             await message.reply({ content: '✅ Ranking resetado para os valores padrão!', ephemeral: true });
         });
-
         coletor.on('end', collected => {
-            if (collected.size === 0) {
-                message.reply({ content: '⏰ Tempo esgotado. Reset cancelado.', ephemeral: true });
-            }
+            if (collected.size === 0) message.reply({ content: '⏰ Tempo esgotado. Reset cancelado.', ephemeral: true });
         });
     }
 });
 
 // 🔹 ============================================
-// 🔹 RESTAURAR RANKING DO CANAL
+// 🔹 RESTAURAR RANKING DO CANAL (SE NECESSÁRIO)
 // 🔹 ============================================
 async function restaurarRankingDoCanal() {
     const channel = client.channels.cache.get(CHANNEL_RANKING);
-    if (!channel) {
-        console.error('❌ Canal de ranking não encontrado!');
-        return false;
-    }
-
+    if (!channel) return false;
     try {
         const ultimaMensagemId = db.ultimaMensagemRankingId;
-        if (!ultimaMensagemId) {
-            console.log('ℹ️ Nenhum ID de mensagem de ranking salvo.');
-            return false;
-        }
-
+        if (!ultimaMensagemId) return false;
         const mensagem = await channel.messages.fetch(ultimaMensagemId);
-        if (!mensagem) {
-            console.log('ℹ️ Mensagem de ranking não encontrada no canal.');
-            return false;
-        }
-
+        if (!mensagem) return false;
         const embed = mensagem.embeds[0];
-        if (!embed || !embed.description) {
-            console.log('ℹ️ Embed de ranking não encontrado.');
-            return false;
-        }
-
+        if (!embed || !embed.description) return false;
         const linhas = embed.description.split('\n');
         const rankingRestaurado = {};
-
         for (const linha of linhas) {
             const match = linha.match(/(?:🥇|🥈|🥉|\d+°)\s+<@!?(\d+)>\s+—\s+(\d+)\s+jogos/);
             if (match) {
@@ -1830,28 +1062,22 @@ async function restaurarRankingDoCanal() {
                 }
             }
         }
-
         if (Object.keys(rankingRestaurado).length > 0) {
             ranking = rankingRestaurado;
             db.ranking = ranking;
             salvarDB(db);
-            console.log(`✅ Ranking restaurado do canal: ${Object.keys(ranking).length} usuários`);
-            for (const [steamId, dados] of Object.entries(ranking)) {
-                console.log(`   - ${dados.nome}: ${dados.jogos} jogos`);
-            }
+            console.log(`✅ Ranking restaurado do canal.`);
             return true;
-        } else {
-            console.log('⚠️ Não foi possível extrair dados do ranking.');
-            return false;
         }
+        return false;
     } catch (error) {
-        console.error('❌ Erro ao restaurar ranking do canal:', error);
+        console.error('❌ Erro ao restaurar ranking:', error);
         return false;
     }
 }
 
 // 🔹 ============================================
-// 🔹 HEALTH CHECK
+// 🔹 HEALTH CHECK (RESPOSTA RÁPIDA)
 // 🔹 ============================================
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
@@ -1862,7 +1088,6 @@ const server = http.createServer((req, res) => {
             timestamp: new Date().toISOString(),
             memory: {
                 rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB',
-                heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB',
                 heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB'
             }
         }));
@@ -1882,20 +1107,15 @@ server.listen(PORT, '0.0.0.0', () => {
 // 🔹 ============================================
 setInterval(() => {
     const agora = Date.now();
-    const cacheSizeBefore = Object.keys(gameNameCache).length;
     for (const [key, value] of Object.entries(gameNameCache)) {
         if (value.timestamp && agora - value.timestamp > CLEANUP_INTERVAL) {
             delete gameNameCache[key];
         }
     }
-    const cacheSizeAfter = Object.keys(gameNameCache).length;
-    if (cacheSizeBefore !== cacheSizeAfter) {
-        console.log(`🧹 Caches limpos. Antes: ${cacheSizeBefore}, Depois: ${cacheSizeAfter}`);
-    }
 }, CLEANUP_INTERVAL);
 
 // 🔹 ============================================
-// 🔹 TRATAMENTO DE SINAIS
+// 🔹 TRATAMENTO DE SIGTERM/SIGINT
 // 🔹 ============================================
 process.on('SIGTERM', async () => {
     console.log('⚠️ Recebido SIGTERM, finalizando...');
@@ -1911,17 +1131,8 @@ process.on('SIGINT', async () => {
     process.exit(0);
 });
 
-process.on('unhandledRejection', (error) => {
-    console.error('❌ Unhandled Rejection:', error);
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception:', error);
-    salvarDB(db);
-});
-
 // 🔹 ============================================
-// 🔹 READY
+// 🔹 CLIENT READY
 // 🔹 ============================================
 client.once('clientReady', async () => {
     console.log(`✅ Bot online como ${client.user.tag}`);
@@ -1932,15 +1143,15 @@ client.once('clientReady', async () => {
     console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
     console.log(`💾 Banco de dados: ${DB_FILE}`);
     console.log(`🔄 Rate limit: ${rateLimiter.minDelay}ms entre requisições`);
-    console.log(`🔄 Max retries: ${MAX_RETRIES} tentativas`);
 
+    // Restaurar ranking
     const rankingRestaurado = await restaurarRankingDoCanal();
     if (!rankingRestaurado) {
         console.log('ℹ️ Usando ranking do banco de dados (ou valores padrão).');
         carregarRanking();
     }
 
-    // 🔹 Vinculação automática
+    // Vincular automaticamente
     const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
     let vinculados = 0;
     for (const steamId of steamIds) {
@@ -1948,34 +1159,32 @@ client.once('clientReady', async () => {
         if (discordId && !db.steamLinks[discordId]) {
             db.steamLinks[discordId] = steamId;
             vinculados++;
-            console.log(`🔗 Vinculado automaticamente: ${steamNames[steamId] || steamId} (${discordId}) -> ${steamId}`);
+            console.log(`🔗 Vinculado automaticamente: ${steamNames[steamId] || steamId}`);
         }
     }
     if (vinculados > 0) {
         salvarDB(db);
         console.log(`✅ ${vinculados} vínculos automáticos realizados.`);
-    } else {
-        console.log(`ℹ️ Nenhum novo vínculo necessário.`);
     }
 
     try {
         const dono = await client.users.fetch(DONO_ID);
         if (dono) {
-            await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite /ranking\n🔎 Use /tem [jogo]\n🛒 Use /quero [jogo] para ser notificado de promoções e lançamentos!\n🔄 Rate limiting ativo: ${rateLimiter.minDelay}ms entre requisições`);
+            await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n📊 Digite /ranking\n🔎 Use /tem [jogo]\n🛒 Use /quero [jogo]`);
         }
     } catch (error) {
         console.error('❌ Erro ao enviar DM para o dono:', error);
     }
 
-    console.log(`🏆 SISTEMA DE CONQUISTAS ATIVADO! Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos`);
+    console.log(`🏆 SISTEMA DE CONQUISTAS ATIVADO!`);
 
+    // Iniciar verificação inicial em background
     setImmediate(async () => {
         console.log('🎮 Iniciando verificação inicial...');
         await checkSteamGames();
     });
 
     console.log(`🔄 Iniciando monitoramento contínuo (${INTERVALO_VERIFICACAO / 1000}s)...`);
-
     setInterval(async () => {
         try {
             await checkSteamGames();
@@ -1983,6 +1192,18 @@ client.once('clientReady', async () => {
             console.error('❌ Erro no intervalo:', error);
         }
     }, INTERVALO_VERIFICACAO);
+});
+
+// 🔹 ============================================
+// 🔹 TRATAMENTO DE ERROS GLOBAIS
+// 🔹 ============================================
+process.on('unhandledRejection', (error) => {
+    console.error('❌ Unhandled Rejection:', error);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    salvarDB(db);
 });
 
 // 🔹 ============================================
