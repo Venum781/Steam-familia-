@@ -78,7 +78,7 @@ const JOGOS_INCOMPATIVEIS = {
   1392860: "Little Nightmares III",
   1328670: "Mass Effect Legendary Edition",
   204100: "Max Payne 3",
-  555160: "Pavlov VR1",
+  555160: "Pavlov VR",
   2129530: "REANIMAL",
   1174180: "Red Dead Redemption 2",
   2215260: "Scott Pilgrim vs. The World: The Game – Complete Edition",
@@ -110,7 +110,7 @@ const discordUsers = {
 };
 
 // 🔹 ============================================
-// 🔹 BANCO DE DADOS (COM VOLUME PERSISTENTE)
+// 🔹 BANCO DE DADOS (COM VOLUME PERSISTENTE E MIGRAÇÃO)
 // 🔹 ============================================
 
 function carregarDB() {
@@ -175,6 +175,82 @@ if (!db.steamLinks) db.steamLinks = {};
 if (!db.jogosNotificados) db.jogosNotificados = {};
 if (!db.listaQuero) db.listaQuero = {};
 if (!db.jogosNotificadosPermanentes) db.jogosNotificadosPermanentes = {};
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: migrarDadosAntigos (NOVA)
+// 🔹 ============================================
+function migrarDadosAntigos() {
+  console.log('🔄 Verificando necessidade de migração de dados...');
+  
+  if (db.jogosNotificadosPermanentes && Object.keys(db.jogosNotificadosPermanentes).length > 0) {
+    console.log('✅ Dados já migrados. Nenhuma ação necessária.');
+    return;
+  }
+  
+  let jogosMigrados = 0;
+  
+  // 🔹 Busca jogos notificados em promocoes (formato antigo)
+  if (db.promocoes) {
+    for (const [steamId, dados] of Object.entries(db.promocoes)) {
+      if (dados && dados.jogosNotificados) {
+        for (const appid of dados.jogosNotificados) {
+          if (!db.jogosNotificadosPermanentes) {
+            db.jogosNotificadosPermanentes = {};
+          }
+          
+          if (!db.jogosNotificadosPermanentes[appid]) {
+            db.jogosNotificadosPermanentes[appid] = {
+              nome: `Jogo ${appid}`,
+              appid: appid,
+              data: new Date().toISOString(),
+              steamId: steamId || 'todos'
+            };
+            jogosMigrados++;
+          }
+        }
+      }
+    }
+  }
+  
+  // 🔹 Busca jogos notificados em jogosNotificados (formato antigo)
+  if (db.jogosNotificados) {
+    for (const [steamId, dados] of Object.entries(db.jogosNotificados)) {
+      if (dados && typeof dados === 'object') {
+        for (const [data, jogos] of Object.entries(dados)) {
+          if (Array.isArray(jogos)) {
+            for (const appid of jogos) {
+              if (!db.jogosNotificadosPermanentes) {
+                db.jogosNotificadosPermanentes = {};
+              }
+              
+              if (!db.jogosNotificadosPermanentes[appid]) {
+                db.jogosNotificadosPermanentes[appid] = {
+                  nome: `Jogo ${appid}`,
+                  appid: appid,
+                  data: new Date().toISOString(),
+                  steamId: steamId || 'todos'
+                };
+                jogosMigrados++;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  if (jogosMigrados > 0) {
+    console.log(`✅ ${jogosMigrados} jogos migrados para o novo formato de notificação permanente!`);
+    salvarDB(db);
+  } else {
+    console.log('ℹ️ Nenhum jogo antigo para migrar.');
+  }
+}
+
+// 🔹 ============================================
+// 🔹 EXECUTA A MIGRAÇÃO
+// 🔹 ============================================
+migrarDadosAntigos();
 
 // 🔹 ============================================
 // 🔹 RANKING (COM PERSISTÊNCIA CORRIGIDA)
@@ -791,6 +867,7 @@ async function verificarPromocoes() {
     let notificacoesEnviadas = 0;
     
     for (const appid of lista) {
+      // 🔹 VERIFICA SE O JOGO JÁ FOI NOTIFICADO PERMANENTEMENTE
       if (jogoJaNotificadoPermanente(appid)) {
         console.log(`ℹ️ Jogo ${appid} já foi notificado em promoção anteriormente.`);
         continue;
@@ -1552,7 +1629,7 @@ async function verificarSuporteFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: checkSteamGames (COM NOTIFICAÇÃO DE LISTA DE DESEJOS)
+// 🔹 FUNÇÃO: checkSteamGames
 // 🔹 ============================================
 async function checkSteamGames() {
   const inicio = Date.now();
