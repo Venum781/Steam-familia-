@@ -345,7 +345,7 @@ async function buscarJogoSteam(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarAppIdPorNome (NOVA)
+// 🔹 FUNÇÃO: buscarAppIdPorNome
 // 🔹 ============================================
 async function buscarAppIdPorNome(nomeJogo) {
   try {
@@ -369,19 +369,16 @@ async function buscarAppIdPorNome(nomeJogo) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: buscarListaDesejos
+// 🔹 FUNÇÃO: buscarListaDesejosSteam
 // 🔹 ============================================
-async function buscarListaDesejos(steamId) {
+async function buscarListaDesejosSteam(steamId) {
   try {
     const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?key=${process.env.STEAM_KEY}&steamid=${steamId}`;
     const response = await fetchWithTimeout(url, 5000);
     const data = await response.json();
     
     if (data.response && data.response.items) {
-      return data.response.items.map(item => ({
-        appid: item.appid,
-        added_at: item.added_at
-      }));
+      return data.response.items.map(item => item.appid);
     }
     return [];
   } catch (error) {
@@ -451,7 +448,7 @@ async function verificarJogoFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: adicionarQuero (ATUALIZADA)
+// 🔹 FUNÇÃO: adicionarQuero
 // 🔹 ============================================
 async function adicionarQuero(discordId, appid, nomeJogo, link) {
   if (!db.listaQuero[discordId]) {
@@ -463,7 +460,6 @@ async function adicionarQuero(discordId, appid, nomeJogo, link) {
     return { sucesso: false, motivo: 'ja_na_lista' };
   }
   
-  // 🔹 Verifica se o jogo já está na família
   const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
   const apiKey = process.env.STEAM_KEY;
   let naFamilia = false;
@@ -531,6 +527,44 @@ function listarQuero(discordId) {
     return [];
   }
   return db.listaQuero[discordId];
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: verificarListaDesejosComprados (NOVA)
+// 🔹 ============================================
+async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorSteamId, compradorNome) {
+  console.log(`🔍 Verificando lista de desejos para ${jogoNome}...`);
+  
+  try {
+    const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
+    
+    for (const steamId of steamIds) {
+      if (steamId === compradorSteamId) continue;
+      
+      const listaDesejos = await buscarListaDesejosSteam(steamId);
+      
+      if (listaDesejos.includes(jogoAppid)) {
+        const discordId = discordUsers[steamId];
+        if (!discordId) continue;
+        
+        try {
+          const usuario = await client.users.fetch(discordId).catch(() => null);
+          if (usuario) {
+            await usuario.send(
+              `🎮 **${jogoNome}** foi comprado por **${compradorNome}**!\n` +
+              `📢 Este jogo estava na sua lista de desejos da Steam.\n` +
+              `🔗 https://store.steampowered.com/app/${jogoAppid}`
+            );
+            console.log(`✅ DM enviada para ${usuario.username}: ${jogoNome} comprado por ${compradorNome}`);
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao enviar DM para ${discordId}:`, error.message);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ Erro ao verificar lista de desejos:', error);
+  }
 }
 
 // 🔹 ============================================
@@ -630,7 +664,7 @@ async function verificarPromocoes() {
     const userName = steamNames[steamId] || 'Venum';
     const mention = `<@${TEST_DISCORD_ID}>`;
     
-    const lista = await buscarListaDesejos(steamId);
+    const lista = await buscarListaDesejosSteam(steamId);
     
     if (lista.length === 0) {
       console.log(`ℹ️ Sua lista de desejos está vazia.`);
@@ -643,9 +677,7 @@ async function verificarPromocoes() {
     
     let notificacoesEnviadas = 0;
     
-    for (const jogo of listaEmbaralhada) {
-      const appid = jogo.appid;
-      
+    for (const appid of listaEmbaralhada) {
       if (jogoJaNotificado(steamId, appid)) {
         console.log(`ℹ️ Jogo ${appid} já foi notificado hoje.`);
         continue;
@@ -706,7 +738,7 @@ async function verificarPromocoes() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoesQuero (NOVA)
+// 🔹 FUNÇÃO: verificarPromocoesQuero
 // 🔹 ============================================
 async function verificarPromocoesQuero() {
   console.log(`🔄 Verificando promoções da lista /quero...`);
@@ -771,7 +803,7 @@ async function verificarPromocoesQuero() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogosCompradosQuero (NOVA)
+// 🔹 FUNÇÃO: verificarJogosCompradosQuero
 // 🔹 ============================================
 async function verificarJogosCompradosQuero() {
   console.log(`🔄 Verificando jogos comprados da lista /quero...`);
@@ -830,7 +862,7 @@ async function verificarJogosCompradosQuero() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogosCompradosFamiliaQuero (NOVA)
+// 🔹 FUNÇÃO: verificarJogosCompradosFamiliaQuero
 // 🔹 ============================================
 async function verificarJogosCompradosFamiliaQuero() {
   console.log(`🔄 Verificando jogos da família comprados da lista /quero...`);
@@ -1328,7 +1360,7 @@ async function verificarSuporteFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: checkSteamGames (COM PROMOÇÕES E /quero)
+// 🔹 FUNÇÃO: checkSteamGames (COM NOTIFICAÇÃO DE LISTA DE DESEJOS)
 // 🔹 ============================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -1381,21 +1413,27 @@ async function checkSteamGames() {
             console.log(`🎮 ${userName} +${newGames.length} novo(s) jogo(s)!`);
             
             for (const game of newGames) {
+              const appid = game.appid;
+              const nome = game.name;
+              
+              // 🔹 VERIFICA LISTA DE DESEJOS DOS OUTROS MEMBROS
+              await verificarListaDesejosComprados(appid, nome, trimmedId, userName);
+              
               // 🔹 Verifica se o jogo está na lista /quero de alguém
               for (const [discordIdQuero, jogosQuero] of Object.entries(db.listaQuero)) {
                 if (!jogosQuero || jogosQuero.length === 0) continue;
                 
-                const jogoNaLista = jogosQuero.find(j => j.appid === game.appid);
+                const jogoNaLista = jogosQuero.find(j => j.appid === appid);
                 if (jogoNaLista) {
-                  const removido = removerQuero(discordIdQuero, game.appid);
+                  const removido = removerQuero(discordIdQuero, appid);
                   if (removido) {
-                    console.log(`✅ ${game.name} removido da lista /quero de ${discordIdQuero} (comprado por ${userName})`);
+                    console.log(`✅ ${nome} removido da lista /quero de ${discordIdQuero} (comprado por ${userName})`);
                     
                     try {
                       const usuario = await client.users.fetch(discordIdQuero).catch(() => null);
                       if (usuario) {
                         await usuario.send(
-                          `🎮 **${game.name}** foi removido automaticamente da sua lista /quero!\n` +
+                          `🎮 **${nome}** foi removido automaticamente da sua lista /quero!\n` +
                           `✅ **${userName}** acabou de adquirir este jogo na Steam.`
                         );
                       }
@@ -1406,12 +1444,12 @@ async function checkSteamGames() {
                 }
               }
               
-              // 🔹 Notificação de novo jogo
-              const link = `https://store.steampowered.com/app/${game.appid}`;
-              const isCompatible = await verificarSuporteFamilia(game.appid);
+              // 🔹 Notificação de novo jogo no canal
+              const link = `https://store.steampowered.com/app/${appid}`;
+              const isCompatible = await verificarSuporteFamilia(appid);
               if (isCompatible) {
                 await channelNotificacoes.send(
-                  `@everyone 🎉 ${mention} comprou o jogo: **${game.name}**\n🔗 ${link}\n✅ **Compatível com Família Steam!**`
+                  `@everyone 🎉 ${mention} comprou o jogo: **${nome}**\n🔗 ${link}\n✅ **Compatível com Família Steam!**`
                 );
                 if (ranking[trimmedId]) {
                   ranking[trimmedId].jogos += 1;
@@ -1615,7 +1653,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
       
-      // 🔹 Verifica se o usuário já tem o jogo (via SteamLink)
       const steamId = db.steamLinks?.[interaction.user.id];
       if (steamId) {
         const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${process.env.STEAM_KEY}&steamid=${steamId}&include_appinfo=true&format=json`;
@@ -1633,7 +1670,6 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
       
-      // 🔹 Adiciona à lista /quero (com verificação da família)
       const resultado = await adicionarQuero(interaction.user.id, jogo.appid, jogo.nome, jogo.link);
       
       if (!resultado.sucesso) {
@@ -1649,7 +1685,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
       
-      // 🔹 Verifica se o jogo já está em promoção
       const preco = await verificarPrecoJogo(jogo.appid);
       
       let mensagem = `✅ **${jogo.nome}** adicionado à sua lista /quero!\n\n`;
