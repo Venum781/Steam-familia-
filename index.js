@@ -14,6 +14,7 @@ const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 const REQUEST_TIMEOUT = 10000;
 const MAX_PROMOCOES_POR_MEMBRO = 1;
+const MAX_TENTATIVAS_POR_MEMBRO = 30;
 
 // 🔹 Rate Limiter
 class RateLimiter {
@@ -686,7 +687,7 @@ async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorStea
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoesTodosMembros (1 JOGO POR MEMBRO)
+// 🔹 FUNÇÃO: verificarPromocoesTodosMembros (1 POR MEMBRO - ALEATÓRIO)
 // 🔹 ============================================
 async function verificarPromocoesTodosMembros() {
     console.log(`🔄 Verificando promoções para TODOS os membros...`);
@@ -723,15 +724,15 @@ async function verificarPromocoesTodosMembros() {
             return;
         }
 
-        // 🔹 Para cada membro, busca 1 jogo em promoção
-        const todasPromocoes = [];
+        // 🔹 Para cada membro, busca 1 jogo em promoção (ALEATÓRIO)
+        const promocoesPorMembro = [];
 
         for (const [steamId, lista] of Object.entries(listasPorMembro)) {
             const nomeMembro = steamNames[steamId] || steamId;
             const discordId = discordUsers[steamId];
             const mention = discordId ? `<@${discordId}>` : nomeMembro;
             
-            console.log(`🔍 Verificando promoções para ${nomeMembro}...`);
+            console.log(`🔍 Buscando 1 promoção para ${nomeMembro}...`);
 
             // 🔹 Filtra jogos não notificados deste membro
             const jogosNaoNotificados = [];
@@ -746,19 +747,21 @@ async function verificarPromocoesTodosMembros() {
                 continue;
             }
 
-            // 🔹 Embaralha para pegar jogos aleatórios
+            // 🔹 Embaralha para pegar jogos ALEATÓRIOS
             const jogosEmbaralhados = [...jogosNaoNotificados];
             for (let i = jogosEmbaralhados.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [jogosEmbaralhados[i], jogosEmbaralhados[j]] = [jogosEmbaralhados[j], jogosEmbaralhados[i]];
             }
 
-            // 🔹 Verifica promoções deste membro (até encontrar 1)
+            // 🔹 Verifica promoções (máximo de 30 tentativas aleatórias)
             let promocaoEncontrada = null;
-            const BATCH_SIZE_ALEATORIO = 5;
+            const BATCH_SIZE = 5;
+            let tentativas = 0;
             
-            for (let i = 0; i < jogosEmbaralhados.length && !promocaoEncontrada; i += BATCH_SIZE_ALEATORIO) {
-                const batch = jogosEmbaralhados.slice(i, i + BATCH_SIZE_ALEATORIO);
+            for (let i = 0; i < jogosEmbaralhados.length && !promocaoEncontrada && tentativas < MAX_TENTATIVAS_POR_MEMBRO; i += BATCH_SIZE) {
+                const batch = jogosEmbaralhados.slice(i, Math.min(i + BATCH_SIZE, jogosEmbaralhados.length));
+                tentativas += batch.length;
                 
                 const resultados = await Promise.all(
                     batch.map(async (appid) => {
@@ -801,28 +804,29 @@ async function verificarPromocoesTodosMembros() {
             }
 
             if (promocaoEncontrada) {
-                console.log(`✅ ${nomeMembro}: 1 promoção encontrada`);
-                todasPromocoes.push(promocaoEncontrada);
+                console.log(`✅ ${nomeMembro}: 1 promoção encontrada (${promocaoEncontrada.nome})`);
                 
                 // 🔹 Marca o jogo como notificado permanentemente
                 registrarJogoNotificadoPermanente(promocaoEncontrada.appid, promocaoEncontrada.nome, steamId);
+                
+                promocoesPorMembro.push(promocaoEncontrada);
             } else {
-                console.log(`ℹ️ ${nomeMembro}: Nenhum jogo em promoção no momento.`);
+                console.log(`ℹ️ ${nomeMembro}: Nenhum jogo em promoção encontrado.`);
             }
         }
 
-        console.log(`📊 Total de promoções encontradas: ${todasPromocoes.length}`);
+        console.log(`📊 Total de promoções encontradas: ${promocoesPorMembro.length} (${promocoesPorMembro.length} membros)`);
 
-        if (todasPromocoes.length === 0) {
+        if (promocoesPorMembro.length === 0) {
             console.log(`ℹ️ Nenhum jogo em promoção para nenhum membro.`);
             await channelPromocoes.send(`📢 **NENHUM JOGO EM PROMOÇÃO NO MOMENTO!**`);
             return;
         }
 
-        // 🔹 Envia as promoções encontradas
+        // 🔹 Envia as promoções encontradas (1 para cada membro)
         await channelPromocoes.send(`🚀 **PROMOÇÕES DO DIA**`);
 
-        for (const jogo of todasPromocoes) {
+        for (const jogo of promocoesPorMembro) {
             const embed = new EmbedBuilder()
                 .setColor(0x00FF00)
                 .setTitle(`🎉 ${jogo.nome} está em promoção!`)
@@ -849,15 +853,19 @@ async function verificarPromocoesTodosMembros() {
         // 🔹 Salva a data da última notificação
         db.ultimaNotificacaoPromocao = {
             data: hoje,
-            quantidade: todasPromocoes.length,
+            quantidade: promocoesPorMembro.length,
             membros: Object.keys(listasPorMembro).length
         };
         salvarDB(db);
         
-        console.log(`✅ ${todasPromocoes.length} promoções notificadas para ${Object.keys(listasPorMembro).length} membros!`);
+        console.log(`✅ ${promocoesPorMembro.length} promoções notificadas para ${Object.keys(listasPorMembro).length} membros!`);
 
     } catch (error) {
         console.error('❌ Erro ao verificar promoções para todos os membros:', error);
+        const channelPromocoes = client.channels.cache.get(CHANNEL_PROMOCOES);
+        if (channelPromocoes) {
+            await channelPromocoes.send(`❌ **ERRO AO VERIFICAR PROMOÇÕES:** ${error.message}`);
+        }
     }
 }
 
@@ -1510,7 +1518,6 @@ async function checkSteamGames() {
         }
 
         if (!isFirstRun) {
-            // 🔹 CHAMA A FUNÇÃO DE PROMOÇÕES
             await verificarPromocoesTodosMembros();
             await verificarJogosCompradosQuero();
             await verificarJogosCompradosFamiliaQuero();
@@ -2258,7 +2265,6 @@ client.once('ready', async () => {
             
             await channelPromocoes.send('🚀 **VERIFICANDO PROMOÇÕES PARA TODOS OS MEMBROS...**');
             
-            // 🔹 Primeira execução (sem parâmetro)
             await verificarPromocoesTodosMembros();
             
             console.log('🚀 PRIMEIRA EXECUÇÃO DE PROMOÇÕES CONCLUÍDA!');
