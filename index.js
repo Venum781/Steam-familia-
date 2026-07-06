@@ -13,6 +13,7 @@ const MAX_CONQUISTAS_POR_JOGO = 30;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 const REQUEST_TIMEOUT = 10000;
+const BATCH_SIZE = 5; // 🔹 Verifica 5 jogos por vez em paralelo
 
 // 🔹 Rate Limiter
 class RateLimiter {
@@ -685,7 +686,7 @@ async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorStea
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoesTodosMembros (PRIMEIRO JOGO DE CADA MEMBRO)
+// 🔹 FUNÇÃO: verificarPromocoesTodosMembros (OTIMIZADA - BATCH EM PARALELO)
 // 🔹 ============================================
 async function verificarPromocoesTodosMembros() {
     console.log(`🔄 Verificando promoções para TODOS os membros...`);
@@ -722,7 +723,7 @@ async function verificarPromocoesTodosMembros() {
             return;
         }
 
-        // 🔹 Para cada membro, busca o PRIMEIRO jogo em promoção
+        // 🔹 Para cada membro, busca o PRIMEIRO jogo em promoção (com BATCH em paralelo)
         const promocoesPorMembro = [];
 
         for (const [steamId, lista] of Object.entries(listasPorMembro)) {
@@ -752,38 +753,55 @@ async function verificarPromocoesTodosMembros() {
                 [jogosEmbaralhados[i], jogosEmbaralhados[j]] = [jogosEmbaralhados[j], jogosEmbaralhados[i]];
             }
 
-            // 🔹 Verifica jogos UM POR UM até encontrar o PRIMEIRO em promoção
+            // 🔹 Verifica em BATCH (5 jogos por vez em PARALELO) até encontrar o PRIMEIRO
             let promocaoEncontrada = null;
+            let jogosVerificados = 0;
             
-            for (const appid of jogosEmbaralhados) {
-                try {
-                    console.log(`   🔍 Verificando AppID: ${appid}...`);
-                    
-                    const preco = await verificarPrecoJogo(appid);
-                    if (preco && preco.emPromocao) {
-                        const donos = await verificarJogoFamilia(appid);
-                        if (donos.length === 0) {
-                            promocaoEncontrada = {
-                                appid: appid,
-                                preco: preco,
-                                nome: preco.nome,
-                                desconto: preco.desconto,
-                                link: preco.link,
-                                precoAtual: preco.precoAtual,
-                                precoAntigo: preco.precoAntigo,
-                                membro: {
-                                    steamId: steamId,
-                                    nome: nomeMembro,
-                                    discordId: discordId,
-                                    mention: mention
+            for (let i = 0; i < jogosEmbaralhados.length && !promocaoEncontrada; i += BATCH_SIZE) {
+                const batch = jogosEmbaralhados.slice(i, i + BATCH_SIZE);
+                jogosVerificados += batch.length;
+                
+                console.log(`   🔍 Verificando ${batch.length} jogos em paralelo (lote ${Math.floor(i/BATCH_SIZE) + 1})...`);
+                
+                const resultados = await Promise.all(
+                    batch.map(async (appid) => {
+                        try {
+                            const preco = await verificarPrecoJogo(appid);
+                            if (preco && preco.emPromocao) {
+                                const donos = await verificarJogoFamilia(appid);
+                                if (donos.length === 0) {
+                                    return {
+                                        appid: appid,
+                                        preco: preco,
+                                        nome: preco.nome,
+                                        desconto: preco.desconto,
+                                        link: preco.link,
+                                        precoAtual: preco.precoAtual,
+                                        precoAntigo: preco.precoAntigo,
+                                        membro: {
+                                            steamId: steamId,
+                                            nome: nomeMembro,
+                                            discordId: discordId,
+                                            mention: mention
+                                        }
+                                    };
                                 }
-                            };
-                            console.log(`   ✅ ${nomeMembro}: PRIMEIRO jogo em promoção encontrado! (${preco.nome})`);
-                            break; // 🔹 PARA IMEDIATAMENTE quando encontra
+                            }
+                            return null;
+                        } catch (error) {
+                            console.error(`   ❌ Erro ao verificar jogo ${appid}:`, error.message);
+                            return null;
                         }
+                    })
+                );
+                
+                // 🔹 Verifica se algum dos jogos do batch estava em promoção
+                for (const resultado of resultados) {
+                    if (resultado && !promocaoEncontrada) {
+                        promocaoEncontrada = resultado;
+                        console.log(`   ✅ ${nomeMembro}: PRIMEIRO jogo em promoção encontrado! (${resultado.nome}) - Verificados ${jogosVerificados} jogos`);
+                        break;
                     }
-                } catch (error) {
-                    console.error(`   ❌ Erro ao verificar jogo ${appid}:`, error.message);
                 }
             }
 
@@ -793,7 +811,7 @@ async function verificarPromocoesTodosMembros() {
                 promocoesPorMembro.push(promocaoEncontrada);
                 console.log(`💾 ${nomeMembro}: Jogo ${promocaoEncontrada.nome} salvo como notificado`);
             } else {
-                console.log(`ℹ️ ${nomeMembro}: Nenhum jogo em promoção encontrado.`);
+                console.log(`ℹ️ ${nomeMembro}: Nenhum jogo em promoção encontrado (verificados ${jogosVerificados} jogos).`);
             }
         }
 
