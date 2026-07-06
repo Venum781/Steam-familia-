@@ -14,6 +14,7 @@ const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 const REQUEST_TIMEOUT = 10000;
 const BATCH_SIZE = 5;
+const CLEANUP_INTERVAL = 3600000; // 1 hora
 
 // 🔹 Rate Limiter
 class RateLimiter {
@@ -64,6 +65,8 @@ try {
 
 // 🔹 Cache
 const compatibilidadeCache = {};
+const gameNameCache = {};
+const achievementNameCache = {};
 
 // 🔹 Jogos incompatíveis
 const JOGOS_INCOMPATIVEIS = {
@@ -200,7 +203,6 @@ function carregarDB() {
             if (!parsed.listaQuero) parsed.listaQuero = {};
             if (!parsed.ultimaNotificacaoPromocao) parsed.ultimaNotificacaoPromocao = {};
             if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
-            // 🔹 NOVO: Lista de jogos sem conquistas (para nunca mais verificar)
             if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {};
 
             const totalJogos = Object.values(parsed.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
@@ -230,7 +232,7 @@ function carregarDB() {
         jogosNotificadosPermanentes: {},
         ultimaNotificacaoPromocao: {},
         ultimaMensagemRankingId: null,
-        jogosSemConquistas: {} // 🔹 NOVO
+        jogosSemConquistas: {}
     };
 }
 
@@ -254,7 +256,7 @@ if (!db.listaQuero) db.listaQuero = {};
 if (!db.jogosNotificadosPermanentes) db.jogosNotificadosPermanentes = {};
 if (!db.ultimaNotificacaoPromocao) db.ultimaNotificacaoPromocao = {};
 if (!db.ultimaMensagemRankingId) db.ultimaMensagemRankingId = null;
-if (!db.jogosSemConquistas) db.jogosSemConquistas = {}; // 🔹 NOVO
+if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
 
 // 🔹 RANKING
 const rankingPadrao = {
@@ -291,10 +293,6 @@ let previousGames = {};
 let ultimaMensagemRankingId = null;
 let primeiraVerificacaoConcluida = false;
 
-// 🔹 Caches
-const gameNameCache = {};
-const achievementNameCache = {};
-
 // 🔹 ============================================
 // 🔹 FUNÇÕES AUXILIARES
 // 🔹 ============================================
@@ -306,7 +304,8 @@ async function getGameDetails(appid) {
         if (data[appid]?.success) {
             const info = {
                 name: data[appid].data.name,
-                icon: data[appid].data.header_image || data[appid].data.capsule_image
+                icon: data[appid].data.header_image || data[appid].data.capsule_image,
+                timestamp: Date.now()
             };
             gameNameCache[appid] = info;
             return info;
@@ -314,7 +313,7 @@ async function getGameDetails(appid) {
     } catch (error) {
         console.error(`❌ Erro ao buscar jogo ${appid}:`, error.message);
     }
-    return { name: `Jogo ${appid}`, icon: null };
+    return { name: `Jogo ${appid}`, icon: null, timestamp: Date.now() };
 }
 
 async function getAchievementName(steamId, appid, apiname) {
@@ -344,10 +343,8 @@ async function getAchievements(steamId, appid) {
         if (data.playerstats?.achievements) {
             return data.playerstats.achievements;
         }
-        // Se retornar erro 400 ou similar, a função fetchWithTimeout já lança exceção
         return [];
     } catch (error) {
-        // Se o erro for 400 (Bad Request), relançamos para ser tratado como "sem conquistas"
         if (error.message && error.message.includes('HTTP 400')) {
             throw error;
         }
@@ -696,7 +693,7 @@ async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorStea
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoesTodosMembros (OTIMIZADA)
+// 🔹 FUNÇÃO: verificarPromocoesTodosMembros
 // 🔹 ============================================
 async function verificarPromocoesTodosMembros() {
     console.log(`🔄 Verificando promoções para TODOS os membros...`);
@@ -711,14 +708,12 @@ async function verificarPromocoesTodosMembros() {
         const hoje = new Date().toLocaleDateString('pt-BR');
         const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
         
-        // 🔹 Verifica se já notificou hoje
         const ultimaNotificacao = db.ultimaNotificacaoPromocao || {};
         if (ultimaNotificacao.data === hoje) {
             console.log(`ℹ️ Já notificou promoções hoje (${hoje}). Próxima notificação apenas amanhã.`);
             return;
         }
 
-        // 🔹 Busca listas de desejos de todos os membros
         const listasPorMembro = {};
         for (const steamId of steamIds) {
             const lista = await buscarListaDesejosSteam(steamId);
@@ -733,7 +728,6 @@ async function verificarPromocoesTodosMembros() {
             return;
         }
 
-        // 🔹 Para cada membro, busca o PRIMEIRO jogo em promoção (com BATCH em paralelo)
         const promocoesPorMembro = [];
 
         for (const [steamId, lista] of Object.entries(listasPorMembro)) {
@@ -743,7 +737,6 @@ async function verificarPromocoesTodosMembros() {
             
             console.log(`🔍 Buscando 1 promoção para ${nomeMembro}...`);
 
-            // 🔹 Filtra jogos já notificados (globalmente)
             const jogosNaoNotificados = [];
             for (const appid of lista) {
                 if (!jogoJaNotificadoPermanente(appid)) {
@@ -756,14 +749,12 @@ async function verificarPromocoesTodosMembros() {
                 continue;
             }
 
-            // 🔹 Embaralha para pegar jogos ALEATÓRIOS
             const jogosEmbaralhados = [...jogosNaoNotificados];
             for (let i = jogosEmbaralhados.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [jogosEmbaralhados[i], jogosEmbaralhados[j]] = [jogosEmbaralhados[j], jogosEmbaralhados[i]];
             }
 
-            // 🔹 Verifica em BATCH (5 jogos por vez em PARALELO)
             let promocaoEncontrada = null;
             let jogosVerificados = 0;
             
@@ -874,7 +865,7 @@ async function verificarPromocoesTodosMembros() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarConquistas (OTIMIZADA - NUNCA REPETE JOGOS SEM CONQUISTAS)
+// 🔹 FUNÇÃO: verificarConquistas (OTIMIZADA)
 // 🔹 ============================================
 async function verificarConquistas(steamId, games, mention, userName) {
     if (!games?.length) return;
@@ -886,7 +877,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
     if (!db.jogosRecentes[steamId]) db.jogosRecentes[steamId] = [];
 
     const jogosRecentes = [];
-    const agora = Math.floor(Date.now() / 1000);
 
     const jogoAtual = await getCurrentGame(steamId);
     if (jogoAtual) {
@@ -944,7 +934,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
         const appid = game.appid;
         const gameName = game.name || `Jogo ${appid}`;
 
-        // 🔹 VERIFICA SE O JOGO JÁ ESTÁ MARCADO COMO "SEM CONQUISTAS"
         if (db.jogosSemConquistas[appid]) {
             console.log(`   ⏭️ ${gameName} ignorado (marcado como sem conquistas)`);
             continue;
@@ -953,7 +942,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
         try {
             const conquistas = await getAchievements(steamId, appid);
             
-            // 🔹 Se não tem conquistas ou deu erro 400, marca como sem conquistas
             if (!conquistas || conquistas.length === 0) {
                 db.jogosSemConquistas[appid] = {
                     nome: gameName,
@@ -964,7 +952,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
                 continue;
             }
 
-            // 🔹 Se chegou aqui, o jogo TEM conquistas, processa normalmente
             const desbloqueadas = conquistas.filter(c => c.achieved === 1);
             const total = desbloqueadas.length;
             const totalConquistasJogo = conquistas.length;
@@ -1037,7 +1024,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
                 }
             }
         } catch (error) {
-            // 🔹 Captura erro 400 (Bad Request) e marca como sem conquistas
             if (error.message && error.message.includes('HTTP 400')) {
                 db.jogosSemConquistas[appid] = {
                     nome: gameName,
@@ -1653,7 +1639,7 @@ async function registrarComandos() {
 }
 
 // 🔹 ============================================
-// 🔹 EVENTOS: interactionCreate, messageCreate, ready, etc.
+// 🔹 EVENTOS: interactionCreate, messageCreate
 // 🔹 ============================================
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isAutocomplete()) {
@@ -2232,7 +2218,7 @@ async function restaurarRankingDoCanal() {
 }
 
 // 🔹 ============================================
-// 🔹 HEALTH CHECK
+// 🔹 HEALTH CHECK MELHORADO (RESPONDE SEMPRE)
 // 🔹 ============================================
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
@@ -2241,7 +2227,12 @@ const server = http.createServer((req, res) => {
             status: 'ok',
             uptime: process.uptime(),
             timestamp: new Date().toISOString(),
-            memory: process.memoryUsage()
+            memory: {
+                rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + ' MB',
+                heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB',
+                heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB'
+            },
+            busy: rateLimiter.lastRequest > Date.now() - 10000
         }));
     } else {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -2252,6 +2243,42 @@ const server = http.createServer((req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Health check rodando na porta ${PORT}`);
+});
+
+// 🔹 ============================================
+// 🔹 LIMPEZA DE CACHES (LIBERA MEMÓRIA)
+// 🔹 ============================================
+setInterval(() => {
+    const agora = Date.now();
+    const cacheSizeBefore = Object.keys(gameNameCache).length;
+    
+    for (const [key, value] of Object.entries(gameNameCache)) {
+        if (value.timestamp && agora - value.timestamp > CLEANUP_INTERVAL) {
+            delete gameNameCache[key];
+        }
+    }
+    
+    const cacheSizeAfter = Object.keys(gameNameCache).length;
+    if (cacheSizeBefore !== cacheSizeAfter) {
+        console.log(`🧹 Caches limpos. Antes: ${cacheSizeBefore}, Depois: ${cacheSizeAfter}`);
+    }
+}, CLEANUP_INTERVAL);
+
+// 🔹 ============================================
+// 🔹 TRATAMENTO DE SIGTERM (SALVA BANCO ANTES DE SAIR)
+// 🔹 ============================================
+process.on('SIGTERM', async () => {
+    console.log('⚠️ Recebido SIGTERM, finalizando...');
+    salvarDB(db);
+    await client.destroy();
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('⚠️ Recebido SIGINT, finalizando...');
+    salvarDB(db);
+    await client.destroy();
+    process.exit(0);
 });
 
 // 🔹 ============================================
@@ -2288,7 +2315,7 @@ client.once('ready', async () => {
     console.log('🎮 Iniciando verificação inicial...');
     await checkSteamGames();
 
-    // 🔹 🔹 🔹 PRIMEIRA EXECUÇÃO - PROMOÇÕES IMEDIATAS 🔹 🔹 🔹
+    // 🔹 PRIMEIRA EXECUÇÃO - PROMOÇÕES IMEDIATAS
     console.log('🚀🚀🚀 EXECUTANDO PRIMEIRA VERIFICAÇÃO DE PROMOÇÕES (IMEDIATA) 🚀🚀🚀');
     
     setTimeout(async () => {
@@ -2310,7 +2337,6 @@ client.once('ready', async () => {
             console.error('❌ Erro na primeira execução de promoções:', error);
         }
     }, 5000);
-    // 🔹 🔹 🔹 FIM DA PRIMEIRA EXECUÇÃO 🔹 🔹 🔹
 
     console.log(`🔄 Iniciando monitoramento contínuo (${INTERVALO_VERIFICACAO / 1000}s)...`);
 
@@ -2324,20 +2350,8 @@ client.once('ready', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 EVENTOS DE DESLIGAMENTO
+// 🔹 EVENTOS DE ERRO GLOBAL
 // 🔹 ============================================
-process.on('SIGINT', async () => {
-    console.log('⚠️ Bot sendo desligado...');
-    salvarDB(db);
-    process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-    console.log('⚠️ Bot sendo encerrado...');
-    salvarDB(db);
-    process.exit(0);
-});
-
 process.on('unhandledRejection', (error) => {
     console.error('❌ Unhandled Rejection:', error);
 });
