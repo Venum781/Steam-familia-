@@ -28,7 +28,7 @@ const rateLimiter = {
 };
 
 // ============================
-// IDS E MAPEAMENTO (SIMPLIFICADO)
+// IDS E MAPEAMENTO
 // ============================
 const CHANNEL_NOTIFICACOES = process.env.CHANNEL_ID;
 const DONO_ID = "336204841972137995";
@@ -350,7 +350,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================
-// COMANDOS SLASH
+// REGISTRO DE COMANDOS SLASH
 // ============================
 async function registrarComandos() {
     try {
@@ -401,7 +401,11 @@ async function registrarComandos() {
     } catch (e) { console.error('❌ Erro ao registrar comandos:', e); }
 }
 
+// ============================
+// INTERAÇÕES
+// ============================
 client.on('interactionCreate', async (interaction) => {
+    // Autocomplete
     if (interaction.isAutocomplete()) {
         if (interaction.commandName === 'tem') {
             const term = interaction.options.getString('jogo')?.toLowerCase() || '';
@@ -424,7 +428,10 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const input = interaction.options.getString('jogo');
         const jogo = await buscarJogoCompleto(input);
-        if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
+        if (!jogo) {
+            await interaction.editReply('❌ Jogo não encontrado.');
+            return;
+        }
         const donos = await verificarJogoFamilia(jogo.appid);
         const embed = new EmbedBuilder()
             .setColor(donos.length ? 0x00FF00 : 0xFF0000)
@@ -444,17 +451,22 @@ client.on('interactionCreate', async (interaction) => {
         try {
             const input = interaction.options.getString('jogo');
             const jogo = await buscarJogoCompleto(input);
-            if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
+            if (!jogo) {
+                await interaction.editReply('❌ Jogo não encontrado.');
+                return;
+            }
 
             if (!db.listaQuero[interaction.user.id]) db.listaQuero[interaction.user.id] = [];
             if (db.listaQuero[interaction.user.id].some(j => j.appid === jogo.appid)) {
-                return interaction.editReply(`ℹ️ **${jogo.nome}** já está na sua lista /quero.`);
+                await interaction.editReply(`ℹ️ **${jogo.nome}** já está na sua lista /quero.`);
+                return;
             }
 
             const donos = await verificarJogoFamilia(jogo.appid);
             if (donos.length) {
                 const nomes = donos.map(d => d.discordId ? `<@${d.discordId}>` : d.nome).join(', ');
-                return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
+                await interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
+                return;
             }
 
             const preco = await verificarPrecoJogo(jogo.appid);
@@ -538,7 +550,10 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'quero-listar') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const lista = db.listaQuero[interaction.user.id] || [];
-        if (!lista.length) return interaction.editReply('📭 Sua lista /quero está vazia.');
+        if (!lista.length) {
+            await interaction.editReply('📭 Sua lista /quero está vazia.');
+            return;
+        }
         const embed = new EmbedBuilder()
             .setTitle(`📋 Sua lista /quero (${lista.length})`)
             .setDescription(lista.map((j, i) => `${i+1}. [${j.nome}](${j.link})`).join('\n'));
@@ -554,7 +569,8 @@ client.on('interactionCreate', async (interaction) => {
         const lista = db.listaQuero[interaction.user.id] || [];
 
         if (!lista.length) {
-            return interaction.editReply('📭 Sua lista /quero está vazia.');
+            await interaction.editReply('📭 Sua lista /quero está vazia.');
+            return;
         }
 
         let jogoRemovido = null;
@@ -577,7 +593,8 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         if (idx === -1 || !jogoRemovido) {
-            return interaction.editReply(`❌ Não encontrei o jogo **${input}** na sua lista. Use o nome exato ou o número da posição (ex: 1, 2, 3...).`);
+            await interaction.editReply(`❌ Não encontrei o jogo **${input}** na sua lista. Use o nome exato ou o número da posição (ex: 1, 2, 3...).`);
+            return;
         }
 
         lista.splice(idx, 1);
