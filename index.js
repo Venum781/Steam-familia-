@@ -13,6 +13,8 @@ const MAX_CONQUISTAS_POR_JOGO = 30;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 const REQUEST_TIMEOUT = 10000;
+const MAX_JOGOS_TESTE = 30; // 🔹 Limite de jogos para teste
+const BATCH_SIZE = 5; // 🔹 Quantos jogos verificar por vez em paralelo
 
 // 🔹 Rate Limiter
 class RateLimiter {
@@ -687,7 +689,7 @@ async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorStea
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoes (COM MODO TESTE)
+// 🔹 FUNÇÃO: verificarPromocoes (OTIMIZADA)
 // 🔹 ============================================
 async function verificarPromocoes(ignorarData = false) {
     console.log(`🔄 Verificando promoções diárias...`);
@@ -727,8 +729,17 @@ async function verificarPromocoes(ignorarData = false) {
 
         console.log(`📋 ${userName} tem ${lista.length} jogos na lista de desejos`);
 
+        // 🔹 LIMITA A QUANTIDADE DE JOGOS PARA TESTE
+        const listaLimitada = ignorarData ? lista.slice(0, MAX_JOGOS_TESTE) : lista;
+
+        if (ignorarData && lista.length > MAX_JOGOS_TESTE) {
+            console.log(`🧪 TESTE: Limitando a ${MAX_JOGOS_TESTE} jogos (de ${lista.length} total)`);
+            await channelPromocoes.send(`🧪 **TESTE:** Verificando apenas os ${MAX_JOGOS_TESTE} primeiros jogos (de ${lista.length} total)`);
+        }
+
+        // Filtra jogos que já foram notificados permanentemente
         const jogosNaoNotificados = [];
-        for (const appid of lista) {
+        for (const appid of listaLimitada) {
             if (!jogoJaNotificadoPermanente(appid)) {
                 jogosNaoNotificados.push(appid);
             }
@@ -737,29 +748,54 @@ async function verificarPromocoes(ignorarData = false) {
         console.log(`📊 ${jogosNaoNotificados.length} jogos ainda não foram notificados`);
 
         if (jogosNaoNotificados.length === 0) {
-            console.log(`✅ Todos os jogos da lista de desejos já foram notificados!`);
+            console.log(`✅ Todos os jogos da lista já foram notificados!`);
             if (ignorarData) {
-                await channelPromocoes.send(`🧪 **TESTE:** Todos os jogos da lista já foram notificados! Nenhum novo jogo para mostrar.`);
+                await channelPromocoes.send(`🧪 **TESTE:** Todos os jogos verificados já foram notificados!`);
             }
             return;
         }
 
+        // 🔹 VERIFICA PROMOÇÕES EM PARALELO
         const jogosEmPromocao = [];
-        for (const appid of jogosNaoNotificados) {
-            const preco = await verificarPrecoJogo(appid);
-            if (preco && preco.emPromocao) {
-                const donos = await verificarJogoFamilia(appid);
-                if (donos.length === 0) {
-                    jogosEmPromocao.push({
-                        appid: appid,
-                        preco: preco,
-                        nome: preco.nome,
-                        desconto: preco.desconto,
-                        link: preco.link,
-                        precoAtual: preco.precoAtual,
-                        precoAntigo: preco.precoAntigo
-                    });
+        
+        for (let i = 0; i < jogosNaoNotificados.length; i += BATCH_SIZE) {
+            const batch = jogosNaoNotificados.slice(i, i + BATCH_SIZE);
+            
+            const resultados = await Promise.all(
+                batch.map(async (appid) => {
+                    try {
+                        const preco = await verificarPrecoJogo(appid);
+                        if (preco && preco.emPromocao) {
+                            const donos = await verificarJogoFamilia(appid);
+                            if (donos.length === 0) {
+                                return {
+                                    appid: appid,
+                                    preco: preco,
+                                    nome: preco.nome,
+                                    desconto: preco.desconto,
+                                    link: preco.link,
+                                    precoAtual: preco.precoAtual,
+                                    precoAntigo: preco.precoAntigo
+                                };
+                            }
+                        }
+                        return null;
+                    } catch (error) {
+                        console.error(`❌ Erro ao verificar jogo ${appid}:`, error.message);
+                        return null;
+                    }
+                })
+            );
+            
+            for (const resultado of resultados) {
+                if (resultado) {
+                    jogosEmPromocao.push(resultado);
                 }
+            }
+            
+            if (ignorarData) {
+                const processados = Math.min(i + BATCH_SIZE, jogosNaoNotificados.length);
+                console.log(`🧪 TESTE: ${processados}/${jogosNaoNotificados.length} jogos verificados...`);
             }
         }
 
@@ -822,7 +858,7 @@ async function verificarPromocoes(ignorarData = false) {
             console.log(`✅ ${jogosParaNotificar.length} promoções notificadas para ${userName}`);
         } else {
             console.log(`🧪 TESTE: ${jogosParaNotificar.length} promoções mostradas (NÃO salvas no banco)`);
-            await channelPromocoes.send(`🧪 **FIM DO TESTE** - ${jogosParaNotificar.length} promoções encontradas!`);
+            await channelPromocoes.send(`🧪 **FIM DO TESTE** - ${jogosParaNotificar.length} promoções encontradas! (Verificados ${Math.min(jogosNaoNotificados.length, MAX_JOGOS_TESTE)} jogos)`);
         }
 
     } catch (error) {
@@ -837,7 +873,7 @@ async function verificarPromocoes(ignorarData = false) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoesQuero (COM MODO TESTE)
+// 🔹 FUNÇÃO: verificarPromocoesQuero (OTIMIZADA)
 // 🔹 ============================================
 async function verificarPromocoesQuero(ignorarData = false) {
     console.log(`🔄 Verificando promoções da lista /quero...`);
@@ -857,7 +893,15 @@ async function verificarPromocoesQuero(ignorarData = false) {
                 await usuario.send(`🧪 **TESTE INICIAL - Promoções da sua lista /quero:**`).catch(() => {});
             }
 
-            for (const jogo of jogos) {
+            // 🔹 LIMITA A QUANTIDADE DE JOGOS PARA TESTE
+            const jogosParaVerificar = ignorarData ? jogos.slice(0, MAX_JOGOS_TESTE) : jogos;
+
+            if (ignorarData && jogos.length > MAX_JOGOS_TESTE) {
+                console.log(`🧪 TESTE /quero: Limitando a ${MAX_JOGOS_TESTE} jogos (de ${jogos.length} total)`);
+                await usuario.send(`🧪 **TESTE:** Verificando apenas os ${MAX_JOGOS_TESTE} primeiros jogos (de ${jogos.length} total)`).catch(() => {});
+            }
+
+            for (const jogo of jogosParaVerificar) {
                 if (jogosEnviados >= MAX_POR_USUARIO) {
                     console.log(`⚠️ Limite de ${MAX_POR_USUARIO} promoções atingido para ${usuario.username}`);
                     break;
@@ -1908,12 +1952,10 @@ client.on('interactionCreate', async (interaction) => {
                     return;
                 }
 
-                // 🔹 LIMITE DE JOGOS PARA EXIBIR
                 const MAX_JOGOS_EXIBIR = 20;
                 const jogosParaExibir = lista.slice(0, MAX_JOGOS_EXIBIR);
                 const totalJogos = lista.length;
 
-                // 🔹 Busca informações em paralelo
                 const jogosInfo = await Promise.all(
                     jogosParaExibir.map(async (jogo) => {
                         try {
@@ -1953,7 +1995,6 @@ client.on('interactionCreate', async (interaction) => {
                     })
                 );
 
-                // 🔹 Cria o embed
                 const embed = new EmbedBuilder()
                     .setColor(0x00AE86)
                     .setTitle(`📋 Sua lista /quero (${totalJogos} jogos)`)
@@ -2346,7 +2387,7 @@ client.once('ready', async () => {
     console.log('🎮 Iniciando verificação inicial...');
     await checkSteamGames();
 
-    // 🔹 🔹 🔹 TESTE DE PROMOÇÕES AO INICIAR (COM DELAY) 🔹 🔹 🔹
+    // 🔹 🔹 🔹 TESTE DE PROMOÇÕES AO INICIAR 🔹 🔹 🔹
     console.log('🧪🧪🧪 AGENDANDO TESTE DE PROMOÇÕES EM 5 SEGUNDOS... 🧪🧪🧪');
     
     setTimeout(async () => {
