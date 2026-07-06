@@ -128,6 +128,7 @@ function carregarDB() {
       if (!parsed.jogosNotificadosPermanentes) parsed.jogosNotificadosPermanentes = {};
       if (!parsed.listaQuero) parsed.listaQuero = {};
       if (!parsed.ultimaNotificacaoPromocao) parsed.ultimaNotificacaoPromocao = {};
+      if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
       
       const totalJogos = Object.values(parsed.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
       console.log(`📊 Banco de dados carregado: ${totalJogos} jogos na lista /quero`);
@@ -155,7 +156,8 @@ function carregarDB() {
     jogosNotificados: {}, 
     listaQuero: {},
     jogosNotificadosPermanentes: {},
-    ultimaNotificacaoPromocao: {}
+    ultimaNotificacaoPromocao: {},
+    ultimaMensagemRankingId: null
   };
 }
 
@@ -178,6 +180,7 @@ if (!db.jogosNotificados) db.jogosNotificados = {};
 if (!db.listaQuero) db.listaQuero = {};
 if (!db.jogosNotificadosPermanentes) db.jogosNotificadosPermanentes = {};
 if (!db.ultimaNotificacaoPromocao) db.ultimaNotificacaoPromocao = {};
+if (!db.ultimaMensagemRankingId) db.ultimaMensagemRankingId = null;
 
 // 🔹 ============================================
 // 🔹 FUNÇÃO: migrarDadosAntigos
@@ -251,7 +254,7 @@ function migrarDadosAntigos() {
 migrarDadosAntigos();
 
 // 🔹 ============================================
-// 🔹 RANKING
+// 🔹 RANKING (COM PERSISTÊNCIA CORRIGIDA)
 // 🔹 ============================================
 
 const rankingPadrao = {
@@ -274,9 +277,11 @@ function carregarRanking() {
         console.log(`📊 Adicionando novo usuário ao ranking: ${dados.nome}`);
       }
     }
-    db.ranking = ranking;
-    salvarDB(db);
+    
     console.log(`📊 Ranking carregado do banco de dados: ${Object.keys(ranking).length} usuários`);
+    for (const [steamId, dados] of Object.entries(ranking)) {
+      console.log(`   - ${dados.nome}: ${dados.jogos} jogos`);
+    }
     return;
   }
   
@@ -284,6 +289,79 @@ function carregarRanking() {
   ranking = JSON.parse(JSON.stringify(rankingPadrao));
   db.ranking = ranking;
   salvarDB(db);
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: restaurarRankingDoCanal (NOVA)
+// 🔹 ============================================
+async function restaurarRankingDoCanal() {
+  const channel = client.channels.cache.get(CHANNEL_RANKING);
+  if (!channel) {
+    console.error('❌ Canal de ranking não encontrado!');
+    return false;
+  }
+
+  try {
+    const ultimaMensagemId = db.ultimaMensagemRankingId;
+    if (!ultimaMensagemId) {
+      console.log('ℹ️ Nenhum ID de mensagem de ranking salvo.');
+      return false;
+    }
+
+    const mensagem = await channel.messages.fetch(ultimaMensagemId);
+    if (!mensagem) {
+      console.log('ℹ️ Mensagem de ranking não encontrada no canal.');
+      return false;
+    }
+
+    const embed = mensagem.embeds[0];
+    if (!embed || !embed.description) {
+      console.log('ℹ️ Embed de ranking não encontrado.');
+      return false;
+    }
+
+    const linhas = embed.description.split('\n');
+    const rankingRestaurado = {};
+
+    for (const linha of linhas) {
+      const match = linha.match(/(?:🥇|🥈|🥉|\d+°)\s+<@!?(\d+)>\s+—\s+(\d+)\s+jogos/);
+      if (match) {
+        const discordId = match[1];
+        const jogos = parseInt(match[2]);
+        
+        for (const [steamId, dados] of Object.entries(discordUsers)) {
+          if (dados === discordId) {
+            rankingRestaurado[steamId] = {
+              nome: steamNames[steamId] || `Usuário ${steamId.substring(0, 8)}`,
+              jogos: jogos,
+              steamId: steamId,
+              discordId: discordId
+            };
+            break;
+          }
+        }
+      }
+    }
+
+    if (Object.keys(rankingRestaurado).length > 0) {
+      ranking = rankingRestaurado;
+      db.ranking = ranking;
+      salvarDB(db);
+      
+      console.log(`✅ Ranking restaurado do canal: ${Object.keys(ranking).length} usuários`);
+      for (const [steamId, dados] of Object.entries(ranking)) {
+        console.log(`   - ${dados.nome}: ${dados.jogos} jogos`);
+      }
+      return true;
+    } else {
+      console.log('⚠️ Não foi possível extrair dados do ranking.');
+      return false;
+    }
+
+  } catch (error) {
+    console.error('❌ Erro ao restaurar ranking do canal:', error);
+    return false;
+  }
 }
 
 carregarRanking();
@@ -773,7 +851,6 @@ async function verificarPromocoes() {
     const userName = steamNames[steamId] || 'Venum';
     const mention = `<@${TEST_DISCORD_ID}>`;
     
-    // 🔹 VERIFICA SE JÁ NOTIFICOU HOJE
     const hoje = new Date().toLocaleDateString('pt-BR');
     const ultimaNotificacao = db.ultimaNotificacaoPromocao || {};
     
@@ -782,7 +859,6 @@ async function verificarPromocoes() {
       return;
     }
     
-    // 🔹 Busca a lista de desejos
     const lista = await buscarListaDesejosSteam(steamId);
     
     if (lista.length === 0) {
@@ -792,7 +868,6 @@ async function verificarPromocoes() {
     
     console.log(`📋 ${userName} tem ${lista.length} jogos na lista de desejos`);
     
-    // 🔹 FILTRA JOGOS QUE JÁ FORAM NOTIFICADOS
     const jogosNaoNotificados = [];
     for (const appid of lista) {
       if (!jogoJaNotificadoPermanente(appid)) {
@@ -808,7 +883,6 @@ async function verificarPromocoes() {
       return;
     }
     
-    // 🔹 VERIFICA QUAIS JOGOS ESTÃO EM PROMOÇÃO
     const jogosEmPromocao = [];
     for (const appid of jogosNaoNotificados) {
       const preco = await verificarPrecoJogo(appid);
@@ -835,13 +909,11 @@ async function verificarPromocoes() {
       return;
     }
     
-    // 🔹 PEGA APENAS 2 JOGOS
     const jogosParaNotificar = jogosEmPromocao.slice(0, 2);
     
     console.log(`🎯 Vou notificar ${jogosParaNotificar.length} promoções hoje:`);
     jogosParaNotificar.forEach(j => console.log(`   - ${j.nome} (${j.desconto}% OFF)`));
     
-    // 🔹 ENVIA AS NOTIFICAÇÕES
     for (const jogo of jogosParaNotificar) {
       const embed = new EmbedBuilder()
         .setColor(0x00FF00)
@@ -868,7 +940,6 @@ async function verificarPromocoes() {
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
-    // 🔹 SALVA A DATA DA ÚLTIMA NOTIFICAÇÃO
     db.ultimaNotificacaoPromocao = {
       data: hoje,
       steamId: steamId,
@@ -1550,6 +1621,9 @@ function gerarRanking() {
   return embed;
 }
 
+// 🔹 ============================================
+// 🔹 FUNÇÃO: enviarRanking (COM SALVAMENTO NO CANAL)
+// 🔹 ============================================
 async function enviarRanking() {
   db.ranking = ranking;
   salvarDB(db);
@@ -1562,13 +1636,25 @@ async function enviarRanking() {
     if (ultimaMensagemRankingId) {
       try {
         const mensagemAntiga = await channel.messages.fetch(ultimaMensagemRankingId);
-        if (mensagemAntiga) await mensagemAntiga.delete();
-      } catch (e) {}
+        if (mensagemAntiga) {
+          await mensagemAntiga.delete();
+          console.log(`🗑️ Mensagem de ranking anterior apagada: ${ultimaMensagemRankingId}`);
+        }
+      } catch (error) {
+        console.log(`ℹ️ Mensagem anterior não encontrada, continuando...`);
+      }
     }
+
     const novaMensagem = await channel.send({ embeds: [embedRanking] });
     ultimaMensagemRankingId = novaMensagem.id;
+    
+    db.ultimaMensagemRankingId = ultimaMensagemRankingId;
+    salvarDB(db);
+    
+    console.log(`📊 Novo ranking enviado! ID: ${ultimaMensagemRankingId}`);
+    
   } catch (error) {
-    console.error('❌ Erro ao enviar ranking:', error);
+    console.error(`❌ Erro ao enviar/atualizar ranking:`, error);
   }
 }
 
@@ -1696,7 +1782,6 @@ async function checkSteamGames() {
       }
     }
 
-    // 🔹 SÓ EXECUTA A VERIFICAÇÃO DE PROMOÇÕES SE NÃO FOR A PRIMEIRA EXECUÇÃO
     if (!isFirstRun) {
       await verificarPromocoes();
       await verificarPromocoesQuero();
@@ -2229,7 +2314,7 @@ process.on('SIGTERM', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 READY
+// 🔹 READY (COM RESTAURAÇÃO DO RANKING)
 // 🔹 ============================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -2239,6 +2324,13 @@ client.once('ready', async () => {
 
   console.log(`⏰ Intervalo: ${INTERVALO_VERIFICACAO / 1000} segundos`);
   console.log(`💾 Banco de dados: ${DB_FILE}`);
+
+  // 🔹 TENTA RESTAURAR O RANKING DO CANAL
+  const rankingRestaurado = await restaurarRankingDoCanal();
+  if (!rankingRestaurado) {
+    console.log('ℹ️ Usando ranking do banco de dados (ou valores padrão).');
+    carregarRanking();
+  }
 
   try {
     const dono = await client.users.fetch(DONO_ID);
