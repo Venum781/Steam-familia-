@@ -57,7 +57,7 @@ const DB_FILE = path.join(DATA_DIR, 'steam_achievements_db.json');
 
 try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-} catch (e) {}
+} catch (e) { console.error('Erro ao criar diretório:', e); }
 
 function carregarDB() {
     try {
@@ -228,7 +228,7 @@ async function verificarPrecoJogo(appid) {
 
 async function verificarJogoFamilia(appid) {
     const donos = [];
-    const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
+    const steamIds = process.env.STEAM_IDS ? process.env.STEAM_IDS.split(',').map(id => id.trim()) : [];
     for (const sid of steamIds) {
         try {
             const url = `https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=${process.env.STEAM_KEY}&steamid=${sid}&include_appinfo=true&format=json`;
@@ -237,7 +237,9 @@ async function verificarJogoFamilia(appid) {
                 const discordId = discordUsers[sid] || null;
                 donos.push({ steamId: sid, nome: steamNames[sid] || sid, discordId });
             }
-        } catch (e) {}
+        } catch (e) {
+            // ignora erro individual
+        }
     }
     return donos;
 }
@@ -625,49 +627,73 @@ process.on('SIGTERM', async () => {
 });
 
 // ============================
-// READY
+// READY - com tratamento de erro robusto
 // ============================
 client.once('clientReady', async () => {
     console.log(`✅ Bot online: ${client.user.tag}`);
-    await registrarComandos();
-
-    // Vinculação automática dos steamIds
-    const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
-    for (const sid of steamIds) {
-        const did = discordUsers[sid];
-        if (did && !db.steamLinks[did]) {
-            db.steamLinks[did] = sid;
-            console.log(`🔗 Vinculado: ${steamNames[sid]}`);
-        }
-    }
-    salvarDB(db);
-
     try {
-        const dono = await client.users.fetch(DONO_ID);
-        if (dono) await dono.send('🚀 Bot Steam Família online! (versão enxuta - /tem e /quero)');
-    } catch (e) {}
+        await registrarComandos();
 
-    // Primeira verificação de lançamentos e promoções após alguns minutos
-    setTimeout(async () => {
-        await verificarLancamentosQuero();
-    }, 2 * 60 * 1000);
+        // Vinculação automática dos steamIds
+        const steamIds = process.env.STEAM_IDS ? process.env.STEAM_IDS.split(',').map(id => id.trim()) : [];
+        for (const sid of steamIds) {
+            const did = discordUsers[sid];
+            if (did && !db.steamLinks[did]) {
+                db.steamLinks[did] = sid;
+                console.log(`🔗 Vinculado: ${steamNames[sid]}`);
+            }
+        }
+        salvarDB(db);
 
-    setTimeout(async () => {
-        await verificarPromocoesQuero();
-    }, 5 * 60 * 1000);
+        try {
+            const dono = await client.users.fetch(DONO_ID);
+            if (dono) await dono.send('🚀 Bot Steam Família online!');
+        } catch (e) {}
 
-    // Intervalos
-    setInterval(async () => {
-        try { await verificarPromocoesQuero(); } catch (e) { console.error('Erro ao verificar promoções:', e); }
-    }, INTERVALO_PROMOCOES);
+        // Primeira verificação de lançamentos e promoções após alguns minutos
+        setTimeout(async () => {
+            try { await verificarLancamentosQuero(); } catch (e) { console.error('Erro na verificação de lançamentos:', e); }
+        }, 2 * 60 * 1000);
 
-    setInterval(async () => {
-        try { await verificarLancamentosQuero(); } catch (e) { console.error('Erro ao verificar lançamentos:', e); }
-    }, INTERVALO_LANCAMENTOS);
+        setTimeout(async () => {
+            try { await verificarPromocoesQuero(); } catch (e) { console.error('Erro na verificação de promoções:', e); }
+        }, 5 * 60 * 1000);
 
-    console.log('✅ Bot pronto!');
+        // Intervalos
+        setInterval(async () => {
+            try { await verificarPromocoesQuero(); } catch (e) { console.error('Erro ao verificar promoções:', e); }
+        }, INTERVALO_PROMOCOES);
+
+        setInterval(async () => {
+            try { await verificarLancamentosQuero(); } catch (e) { console.error('Erro ao verificar lançamentos:', e); }
+        }, INTERVALO_LANCAMENTOS);
+
+        console.log('✅ Bot pronto!');
+    } catch (error) {
+        console.error('❌ Erro fatal na inicialização:', error);
+        // Não mata o processo, apenas loga
+    }
 });
 
+// ============================
+// TRATAMENTO DE ERROS GLOBAIS
+// ============================
+process.on('unhandledRejection', (error) => {
+    console.error('❌ Unhandled Rejection:', error);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    salvarDB(db);
+});
+
+// ============================
+// LOGIN
+// ============================
+console.log('🔄 Iniciando login...');
 client.login(process.env.DISCORD_TOKEN)
     .then(() => console.log('🔑 Login realizado'))
-    .catch(e => { console.error('❌ Erro ao login:', e); process.exit(1); });
+    .catch(e => {
+        console.error('❌ Erro ao login:', e);
+        process.exit(1);
+    });
