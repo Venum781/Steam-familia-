@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const axios = require('axios');
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, MessageFlags } = require('discord.js');
 
 // ============================
 // CONFIGURAÇÕES BÁSICAS
@@ -421,7 +421,7 @@ client.on('interactionCreate', async (interaction) => {
     // COMANDO /tem
     // ============================
     if (interaction.commandName === 'tem') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const input = interaction.options.getString('jogo');
         const jogo = await buscarJogoCompleto(input);
         if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
@@ -440,7 +440,7 @@ client.on('interactionCreate', async (interaction) => {
     // COMANDO /quero (adicionar)
     // ============================
     if (interaction.commandName === 'quero') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
             const input = interaction.options.getString('jogo');
             const jogo = await buscarJogoCompleto(input);
@@ -536,7 +536,7 @@ client.on('interactionCreate', async (interaction) => {
     // /quero-listar
     // ============================
     if (interaction.commandName === 'quero-listar') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const lista = db.listaQuero[interaction.user.id] || [];
         if (!lista.length) return interaction.editReply('📭 Sua lista /quero está vazia.');
         const embed = new EmbedBuilder()
@@ -549,7 +549,7 @@ client.on('interactionCreate', async (interaction) => {
     // /quero-remover (aceita nome ou número)
     // ============================
     if (interaction.commandName === 'quero-remover') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const input = interaction.options.getString('jogo');
         const lista = db.listaQuero[interaction.user.id] || [];
 
