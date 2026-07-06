@@ -196,10 +196,9 @@ async function getAchievementIcon(appid, apiname) {
     } catch (e) { return null; }
 }
 
-// 🔹 FUNÇÃO CORRIGIDA: BUSCA JOGO COM CAPA
-async function buscarJogoSteam(nome) {
+// 🔹 BUSCA JOGO (OPÇÃO DE PULAR CAPA PARA MAIS VELOCIDADE)
+async function buscarJogoSteam(nome, comCapa = false) {
     try {
-        // 1. Busca o jogo pelo nome
         const searchUrl = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(nome)}&l=portuguese&cc=BR&max=1`;
         const searchData = await fetchWithTimeout(searchUrl, 5000);
         if (!searchData.items?.length) return null;
@@ -207,14 +206,14 @@ async function buscarJogoSteam(nome) {
         const jogo = searchData.items[0];
         const appid = jogo.id;
 
-        // 2. Busca os detalhes completos para obter a capa
-        const detailsUrl = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
-        const detailsData = await fetchWithTimeout(detailsUrl, 5000);
-
-        let capa = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`; // fallback padrão
-        if (detailsData[appid]?.success) {
-            const data = detailsData[appid].data;
-            capa = data.header_image || data.capsule_image || capa;
+        let capa = null;
+        if (comCapa) {
+            const detailsUrl = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
+            const detailsData = await fetchWithTimeout(detailsUrl, 5000);
+            if (detailsData[appid]?.success) {
+                const data = detailsData[appid].data;
+                capa = data.header_image || data.capsule_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`;
+            }
         }
 
         return {
@@ -540,11 +539,11 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // /tem - COM CAPA CORRIGIDA
+    // /tem - COM CAPA
     if (interaction.commandName === 'tem') {
         await interaction.deferReply({ ephemeral: true });
         const input = interaction.options.getString('jogo');
-        const jogo = await buscarJogoSteam(input);
+        const jogo = await buscarJogoSteam(input, true); // com capa
         if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
         const donos = await verificarJogoFamilia(jogo.appid);
         const embed = new EmbedBuilder()
@@ -553,10 +552,7 @@ client.on('interactionCreate', async (interaction) => {
             .setURL(jogo.url)
             .setDescription(donos.length ? `👤 **${donos.length} membro(s) possui(em):**\n${donos.map(d => `• ${d.discordId ? `<@${d.discordId}>` : d.nome}`).join('\n')}` : '😕 Nenhum membro da família possui este jogo.')
             .setTimestamp();
-        // 🔹 ADICIONA A CAPA
-        if (jogo.capa) {
-            embed.setThumbnail(jogo.capa);
-        }
+        if (jogo.capa) embed.setThumbnail(jogo.capa);
         await interaction.editReply({ embeds: [embed] });
     }
 
@@ -565,30 +561,40 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply({ embeds: [gerarRanking()] });
     }
 
+    // /quero - OTIMIZADO (SEM CAPA, SEM VERIFICAÇÃO DE BIBLIOTECA DO USUÁRIO)
     if (interaction.commandName === 'quero') {
         await interaction.deferReply({ ephemeral: true });
         const nome = interaction.options.getString('jogo');
-        const jogo = await buscarJogoSteam(nome);
+        
+        // Busca apenas o básico (nome, appid, url) - MUITO MAIS RÁPIDO
+        const jogo = await buscarJogoSteam(nome, false);
         if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
+        
+        // Verifica se já está na lista pessoal
         if (!db.listaQuero[interaction.user.id]) db.listaQuero[interaction.user.id] = [];
         if (db.listaQuero[interaction.user.id].some(j => j.appid === jogo.appid)) {
-            return interaction.editReply(`ℹ️ ${jogo.nome} já está na sua lista.`);
+            return interaction.editReply(`ℹ️ **${jogo.nome}** já está na sua lista /quero.`);
         }
+        
+        // Verifica se alguém da família já possui (rápido, só 5 requisições)
         const donos = await verificarJogoFamilia(jogo.appid);
         if (donos.length) {
-            return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${donos.map(d => d.discordId ? `<@${d.discordId}>` : d.nome).join(', ')} já possui.`);
+            const nomes = donos.map(d => d.discordId ? `<@${d.discordId}>` : d.nome).join(', ');
+            return interaction.editReply(`ℹ️ **${jogo.nome}** já está na família! ${nomes} já possui.`);
         }
+        
+        // Adiciona à lista
         db.listaQuero[interaction.user.id].push({ appid: jogo.appid, nome: jogo.nome, link: jogo.url });
         salvarDB(db);
-        await interaction.editReply(`✅ **${jogo.nome}** adicionado à lista /quero.`);
+        await interaction.editReply(`✅ **${jogo.nome}** adicionado à sua lista /quero!`);
     }
 
     if (interaction.commandName === 'quero-listar') {
         await interaction.deferReply({ ephemeral: true });
         const lista = db.listaQuero[interaction.user.id] || [];
-        if (!lista.length) return interaction.editReply('📭 Lista vazia.');
+        if (!lista.length) return interaction.editReply('📭 Sua lista /quero está vazia.');
         const embed = new EmbedBuilder()
-            .setTitle(`📋 Lista /quero (${lista.length})`)
+            .setTitle(`📋 Sua lista /quero (${lista.length})`)
             .setDescription(lista.map((j, i) => `${i+1}. [${j.nome}](${j.link})`).join('\n'));
         await interaction.editReply({ embeds: [embed] });
     }
@@ -596,14 +602,14 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'quero-remover') {
         await interaction.deferReply({ ephemeral: true });
         const nome = interaction.options.getString('jogo');
-        const jogo = await buscarJogoSteam(nome);
+        const jogo = await buscarJogoSteam(nome, false);
         if (!jogo) return interaction.editReply('❌ Jogo não encontrado.');
         const lista = db.listaQuero[interaction.user.id] || [];
         const idx = lista.findIndex(j => j.appid === jogo.appid);
-        if (idx === -1) return interaction.editReply(`ℹ️ ${jogo.nome} não está na lista.`);
+        if (idx === -1) return interaction.editReply(`ℹ️ **${jogo.nome}** não está na sua lista.`);
         lista.splice(idx, 1);
         salvarDB(db);
-        await interaction.editReply(`✅ ${jogo.nome} removido.`);
+        await interaction.editReply(`✅ **${jogo.nome}** removido da lista /quero.`);
     }
 
     if (interaction.commandName === 'dbstatus') {
@@ -740,7 +746,7 @@ client.once('clientReady', async () => {
 
     try {
         const dono = await client.users.fetch(DONO_ID);
-        if (dono) await dono.send('🚀 Bot Steam Família online! (com capas corrigidas)');
+        if (dono) await dono.send('🚀 Bot Steam Família online! (comandos otimizados)');
     } catch (e) {}
 
     setImmediate(async () => {
