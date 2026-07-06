@@ -92,7 +92,7 @@ const discordUsers = {
 };
 
 // 🔹 ============================================
-// 🔹 BANCO DE DADOS
+// 🔹 BANCO DE DADOS (CORRIGIDO)
 // 🔹 ============================================
 
 function carregarDB() {
@@ -100,20 +100,49 @@ function carregarDB() {
     if (fs.existsSync(DB_FILE)) {
       const data = fs.readFileSync(DB_FILE, 'utf8');
       const parsed = JSON.parse(data);
+      
+      // 🔹 GARANTE QUE TODAS AS ESTRUTURAS EXISTAM
       if (!parsed.ranking) parsed.ranking = {};
       if (!parsed.conquistas) parsed.conquistas = {};
       if (!parsed.jogosRecentes) parsed.jogosRecentes = {};
       if (!parsed.promocoes) parsed.promocoes = {};
       if (!parsed.steamLinks) parsed.steamLinks = {};
       if (!parsed.jogosNotificados) parsed.jogosNotificados = {};
-      if (!parsed.listaQuero) parsed.listaQuero = {};
       if (!parsed.jogosNotificadosPermanentes) parsed.jogosNotificadosPermanentes = {};
+      
+      // 🔹 NUNCA SOBRESCREVE A LISTA /quero
+      if (!parsed.listaQuero) {
+        parsed.listaQuero = {};
+      }
+      
+      // 🔹 LOG PARA VERIFICAR O QUE FOI CARREGADO
+      const totalJogos = Object.values(parsed.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
+      console.log(`📊 Banco de dados carregado: ${totalJogos} jogos na lista /quero`);
+      
       return parsed;
     }
   } catch (error) {
     console.error('❌ Erro ao carregar banco:', error);
+    // 🔹 FAZ BACKUP DO ARQUIVO CORROMPIDO
+    if (fs.existsSync(DB_FILE)) {
+      const backupPath = `${DB_FILE}.backup_${Date.now()}`;
+      fs.copyFileSync(DB_FILE, backupPath);
+      console.log(`💾 Backup do banco corrompido salvo em: ${backupPath}`);
+    }
   }
-  return { conquistas: {}, jogosRecentes: {}, ranking: {}, promocoes: {}, steamLinks: {}, jogosNotificados: {}, listaQuero: {}, jogosNotificadosPermanentes: {} };
+  
+  // 🔹 CRIA BANCO DE DADOS NOVO COM ESTRUTURAS VAZIAS
+  console.log('📝 Criando novo banco de dados...');
+  return { 
+    conquistas: {}, 
+    jogosRecentes: {}, 
+    ranking: {}, 
+    promocoes: {}, 
+    steamLinks: {}, 
+    jogosNotificados: {}, 
+    listaQuero: {},
+    jogosNotificadosPermanentes: {}
+  };
 }
 
 function salvarDB(db) {
@@ -570,7 +599,7 @@ function listarQuero(discordId) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: jogoJaNotificadoPermanente (NOVA)
+// 🔹 FUNÇÃO: jogoJaNotificadoPermanente
 // 🔹 ============================================
 function jogoJaNotificadoPermanente(appid) {
   if (!db.jogosNotificadosPermanentes) {
@@ -585,7 +614,7 @@ function jogoJaNotificadoPermanente(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: registrarJogoNotificadoPermanente (NOVA)
+// 🔹 FUNÇÃO: registrarJogoNotificadoPermanente
 // 🔹 ============================================
 function registrarJogoNotificadoPermanente(appid, nomeJogo, steamId) {
   if (!db.jogosNotificadosPermanentes) {
@@ -1690,6 +1719,10 @@ async function registrarComandos() {
       {
         name: 'limparnotificados',
         description: '[DONO] Limpa a lista de jogos notificados hoje'
+      },
+      {
+        name: 'dbstatus',
+        description: '[DONO] Mostra o status do banco de dados'
       }
     ];
 
@@ -1870,7 +1903,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // 🔹 COMANDO /quero-listar (NOVO)
+  // 🔹 COMANDO /quero-listar
   if (interaction.isChatInputCommand() && interaction.commandName === 'quero-listar') {
     await interaction.deferReply({ ephemeral: true });
     
@@ -2008,6 +2041,53 @@ client.on('interactionCreate', async (interaction) => {
       console.error('❌ Erro no comando /limparnotificados:', error);
       await interaction.editReply({
         content: '❌ Ocorreu um erro ao limpar a lista.'
+      });
+    }
+  }
+
+  // 🔹 COMANDO /dbstatus (NOVO)
+  if (interaction.isChatInputCommand() && interaction.commandName === 'dbstatus') {
+    if (interaction.user.id !== DONO_ID) {
+      await interaction.reply({
+        content: '❌ Apenas o dono pode usar este comando.',
+        ephemeral: true
+      });
+      return;
+    }
+    
+    await interaction.deferReply({ ephemeral: true });
+    
+    try {
+      const totalQuero = Object.values(db.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
+      const totalSteamLinks = Object.keys(db.steamLinks).length;
+      const totalNotificados = Object.keys(db.jogosNotificadosPermanentes).length;
+      
+      let mensagem = `📊 **Status do Banco de Dados:**\n\n`;
+      mensagem += `📋 Lista /quero: **${totalQuero}** jogos\n`;
+      mensagem += `🔗 Steam Links: **${totalSteamLinks}** usuários\n`;
+      mensagem += `📢 Jogos notificados: **${totalNotificados}** jogos\n`;
+      mensagem += `💾 Arquivo: ${DB_FILE}\n`;
+      mensagem += `📅 Última atualização: ${new Date().toLocaleString()}`;
+      
+      if (totalQuero > 0) {
+        mensagem += `\n\n📋 **Jogos na lista /quero:**\n`;
+        for (const [discordId, jogos] of Object.entries(db.listaQuero)) {
+          if (jogos.length > 0) {
+            const usuario = await client.users.fetch(discordId).catch(() => null);
+            const nome = usuario ? usuario.username : discordId;
+            mensagem += `\n👤 ${nome}: ${jogos.map(j => j.nome).join(', ')}`;
+          }
+        }
+      }
+      
+      await interaction.editReply({
+        content: mensagem
+      });
+      
+    } catch (error) {
+      console.error('❌ Erro no comando /dbstatus:', error);
+      await interaction.editReply({
+        content: '❌ Ocorreu um erro ao verificar o banco de dados.'
       });
     }
   }
