@@ -2218,7 +2218,7 @@ async function restaurarRankingDoCanal() {
 }
 
 // 🔹 ============================================
-// 🔹 HEALTH CHECK MELHORADO (RESPONDE SEMPRE)
+// 🔹 HEALTH CHECK MELHORADO
 // 🔹 ============================================
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
@@ -2265,7 +2265,7 @@ setInterval(() => {
 }, CLEANUP_INTERVAL);
 
 // 🔹 ============================================
-// 🔹 TRATAMENTO DE SIGTERM (SALVA BANCO ANTES DE SAIR)
+// 🔹 TRATAMENTO DE SIGTERM/SIGINT
 // 🔹 ============================================
 process.on('SIGTERM', async () => {
     console.log('⚠️ Recebido SIGTERM, finalizando...');
@@ -2282,9 +2282,9 @@ process.on('SIGINT', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 READY
+// 🔹 EVENTO clientReady (ANTIGO ready)
 // 🔹 ============================================
-client.once('ready', async () => {
+client.once('clientReady', async () => {
     console.log(`✅ Bot online como ${client.user.tag}`);
     console.log(`📡 Conectado em ${client.guilds.cache.size} servidor(es)`);
 
