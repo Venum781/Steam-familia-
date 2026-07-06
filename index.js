@@ -30,7 +30,25 @@ const DONO_ID = "336204841972137995";
 const TEST_STEAM_ID = "76561198110004039";
 const TEST_DISCORD_ID = "336204841972137995";
 
-const DB_FILE = path.join(__dirname, 'steam_achievements_db.json');
+// 🔹 ============================================
+// 🔹 CONFIGURAÇÃO DO BANCO DE DADOS (COM VOLUME PERSISTENTE)
+// 🔹 ============================================
+
+// 🔹 Usa o volume persistente do Railway (300 MB)
+const DATA_DIR = '/data';
+const DB_FILE = path.join(DATA_DIR, 'steam_achievements_db.json');
+
+// 🔹 Cria a pasta /data se não existir (fallback para desenvolvimento local)
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    console.log(`📁 Pasta ${DATA_DIR} criada!`);
+  } else {
+    console.log(`✅ Usando volume persistente: ${DATA_DIR}`);
+  }
+} catch (error) {
+  console.log(`ℹ️ Usando diretório local como fallback.`);
+}
 
 // 🔹 Cache de compatibilidade
 const compatibilidadeCache = {};
@@ -92,7 +110,7 @@ const discordUsers = {
 };
 
 // 🔹 ============================================
-// 🔹 BANCO DE DADOS (CORRIGIDO)
+// 🔹 BANCO DE DADOS (COM VOLUME PERSISTENTE)
 // 🔹 ============================================
 
 function carregarDB() {
@@ -113,6 +131,7 @@ function carregarDB() {
       const totalJogos = Object.values(parsed.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
       console.log(`📊 Banco de dados carregado: ${totalJogos} jogos na lista /quero`);
       console.log(`📊 Jogos notificados permanentemente: ${Object.keys(parsed.jogosNotificadosPermanentes).length}`);
+      console.log(`💾 Arquivo: ${DB_FILE}`);
       
       return parsed;
     }
@@ -141,7 +160,7 @@ function carregarDB() {
 function salvarDB(db) {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-    console.log('💾 Banco de dados salvo!');
+    console.log(`💾 Banco de dados salvo em: ${DB_FILE}`);
   } catch (error) {
     console.error('❌ Erro ao salvar banco:', error);
   }
