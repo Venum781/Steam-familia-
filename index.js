@@ -419,7 +419,7 @@ async function verificarPrecoJogo(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarDisponibilidadeJogo (NOVA)
+// 🔹 FUNÇÃO: verificarDisponibilidadeJogo (CORRIGIDA)
 // 🔹 ============================================
 async function verificarDisponibilidadeJogo(appid) {
   try {
@@ -432,13 +432,23 @@ async function verificarDisponibilidadeJogo(appid) {
     const gameData = data[appid].data;
     const releaseDate = gameData.release_date;
     
+    const jaFoiLancado = releaseDate?.coming_soon === false;
+    const aindaNaoLancado = releaseDate?.coming_soon === true;
+    
+    const temPreco = gameData.price_overview && gameData.price_overview.final > 0;
+    
+    const isPreVenda = aindaNaoLancado && temPreco;
+    const isDisponivel = jaFoiLancado && temPreco;
+    
     return {
       nome: gameData.name,
-      disponivel: gameData.release_date?.coming_soon === false,
-      preVenda: gameData.release_date?.coming_soon === true && gameData.release_date?.date !== '',
+      disponivel: isDisponivel,
+      preVenda: isPreVenda,
       dataLancamento: releaseDate?.date || 'Data desconhecida',
       emPromocao: gameData.price_overview?.final < gameData.price_overview?.initial || false,
-      link: `https://store.steampowered.com/app/${appid}`
+      link: `https://store.steampowered.com/app/${appid}`,
+      temPreco: temPreco,
+      aindaNaoLancado: aindaNaoLancado
     };
   } catch (error) {
     console.error(`❌ Erro ao verificar disponibilidade do jogo ${appid}:`, error.message);
@@ -958,7 +968,7 @@ async function verificarJogosCompradosFamiliaQuero() {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogosNaoLancadosQuero (NOVA)
+// 🔹 FUNÇÃO: verificarJogosNaoLancadosQuero (ATUALIZADA)
 // 🔹 ============================================
 async function verificarJogosNaoLancadosQuero() {
   console.log(`🔄 Verificando jogos não lançados da lista /quero...`);
@@ -974,7 +984,9 @@ async function verificarJogosNaoLancadosQuero() {
         const info = await verificarDisponibilidadeJogo(jogo.appid);
         if (!info) continue;
         
-        if (info.disponivel || info.preVenda) {
+        const deveNotificar = info.disponivel || info.preVenda;
+        
+        if (deveNotificar) {
           const hoje = new Date().toLocaleDateString('pt-BR');
           const chaveNotificacao = `lancamento_${discordId}_${jogo.appid}`;
           
@@ -1778,12 +1790,19 @@ client.on('interactionCreate', async (interaction) => {
       let mensagem = `✅ **${jogo.nome}** adicionado à sua lista /quero!\n\n`;
       mensagem += `🔗 ${jogo.link}\n\n`;
       
-      if (infoDisponibilidade && (infoDisponibilidade.disponivel || infoDisponibilidade.preVenda)) {
-        mensagem += `🎉 **ATENÇÃO!** Este jogo **JÁ ESTÁ DISPONÍVEL!**\n`;
-        mensagem += `📅 Data de lançamento: ${infoDisponibilidade.dataLancamento}`;
-      } else if (infoDisponibilidade && infoDisponibilidade.dataLancamento) {
-        mensagem += `📢 Você será notificado(a) por DM quando este jogo estiver disponível.\n`;
-        mensagem += `📅 Lançamento previsto: ${infoDisponibilidade.dataLancamento}`;
+      if (infoDisponibilidade) {
+        if (infoDisponibilidade.disponivel) {
+          mensagem += `🎉 **ATENÇÃO!** Este jogo **JÁ ESTÁ DISPONÍVEL PARA COMPRA!**\n`;
+          mensagem += `📅 Data de lançamento: ${infoDisponibilidade.dataLancamento}`;
+        } else if (infoDisponibilidade.preVenda) {
+          mensagem += `🛒 **ATENÇÃO!** Este jogo **ESTÁ EM PRÉ-VENDA!**\n`;
+          mensagem += `📅 Data de lançamento: ${infoDisponibilidade.dataLancamento}`;
+        } else if (infoDisponibilidade.aindaNaoLancado) {
+          mensagem += `📢 Você será notificado(a) por DM quando este jogo estiver disponível para compra.\n`;
+          mensagem += `📅 Lançamento previsto: ${infoDisponibilidade.dataLancamento}`;
+        } else {
+          mensagem += `📢 Você será notificado(a) por DM quando este jogo estiver disponível para compra!`;
+        }
       } else {
         mensagem += `📢 Você será notificado(a) por DM quando este jogo estiver disponível para compra!`;
       }
