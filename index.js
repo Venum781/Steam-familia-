@@ -2,6 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const axios = require('axios');
 
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 
@@ -128,28 +129,25 @@ const client = new Client({
 });
 
 // 🔹 ============================================
-// 🔹 FETCH COM RATE LIMITING
+// 🔹 FETCH COM AXIOS E RATE LIMITING
 // 🔹 ============================================
 async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) {
     try {
         await rateLimiter.wait();
         
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeout);
-        
         console.log(`🌐 Fetch: ${url.substring(0, 100)}...`);
         
-        const response = await fetch(url, { 
-            signal: controller.signal,
+        const response = await axios.get(url, {
+            timeout: timeout,
             headers: {
                 'User-Agent': 'SteamFamilyBot/1.0',
                 'Accept': 'application/json'
-            }
+            },
+            validateStatus: (status) => status < 500
         });
         
-        clearTimeout(timeoutId);
-        
-        const contentType = response.headers.get('content-type') || '';
+        // Verifica se a resposta é HTML (possível rate limit)
+        const contentType = response.headers['content-type'] || '';
         if (contentType.includes('text/html')) {
             console.warn(`⚠️ Resposta HTML recebida (possível rate limit) - Status: ${response.status}`);
             throw new Error('HTML_RESPONSE');
@@ -166,20 +164,14 @@ async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) 
             throw new Error(`Rate limit excedido após ${MAX_RETRIES} tentativas`);
         }
         
-        if (!response.ok) {
+        if (response.status >= 400) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
-        try {
-            const data = await response.json();
-            return data;
-        } catch (e) {
-            console.error('❌ Erro ao parsear JSON:', e.message);
-            throw new Error('INVALID_JSON');
-        }
+        return response.data;
         
     } catch (error) {
-        if (error.name === 'AbortError' || error.code === 'ETIMEDOUT') {
+        if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
             console.warn(`⚠️ Timeout, tentando novamente... (${retryCount + 1}/${MAX_RETRIES})`);
             if (retryCount < MAX_RETRIES) {
                 await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * (retryCount + 1)));
@@ -2147,7 +2139,7 @@ async function restaurarRankingDoCanal() {
 }
 
 // 🔹 ============================================
-// 🔹 HEALTH CHECK COM HTTP (SEM EXPRESS)
+// 🔹 HEALTH CHECK COM HTTP
 // 🔹 ============================================
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
