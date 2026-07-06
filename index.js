@@ -1,10 +1,11 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 
-// 🔹 CONFIGURAÇÕES OTIMIZADAS
+// 🔹 CONFIGURAÇÕES
 const INTERVALO_VERIFICACAO = 15 * 1000;
 const MAX_JOGOS_POR_USUARIO = 8;
 const MAX_CONQUISTAS_POR_JOGO = 30;
@@ -12,11 +13,11 @@ const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000;
 const REQUEST_TIMEOUT = 10000;
 
-// 🔹 Classe para gerenciar Rate Limiting
+// 🔹 Rate Limiter
 class RateLimiter {
     constructor() {
         this.requests = {};
-        this.minDelay = 1500; // 1.5 segundos entre requisições
+        this.minDelay = 1500;
         this.lastRequest = 0;
     }
 
@@ -41,16 +42,12 @@ const CHANNEL_RANKING = "1523067407474757672";
 const CHANNEL_CONQUISTAS = "1523080625802711150";
 const CHANNEL_PROMOCOES = "1523668313094225961";
 
-// 🔹 ID do dono do bot
+// 🔹 ID do dono
 const DONO_ID = "336204841972137995";
-
-// 🔹 CONFIGURAÇÃO DE TESTE
 const TEST_STEAM_ID = "76561198110004039";
 const TEST_DISCORD_ID = "336204841972137995";
 
-// 🔹 ============================================
-// 🔹 CONFIGURAÇÃO DO BANCO DE DADOS
-// 🔹 ============================================
+// 🔹 Banco de dados
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
 const DB_FILE = path.join(DATA_DIR, 'steam_achievements_db.json');
 
@@ -65,10 +62,10 @@ try {
     console.log(`ℹ️ Usando diretório local como fallback.`);
 }
 
-// 🔹 Cache de compatibilidade
+// 🔹 Cache
 const compatibilidadeCache = {};
 
-// 🔹 LISTA DE JOGOS NÃO COMPATÍVEIS
+// 🔹 Jogos incompatíveis
 const JOGOS_INCOMPATIVEIS = {
     33930: "Arma 2: Operation Arrowhead",
     107410: "Arma 3",
@@ -105,7 +102,7 @@ const JOGOS_INCOMPATIVEIS = {
     1222700: "A Way Out"
 };
 
-// 🔹 Mapeamento de usuários
+// 🔹 Mapeamento
 const steamNames = {
     "76561198127320557": "Gardemi",
     "76561197967265286": "Marlon",
@@ -131,11 +128,10 @@ const client = new Client({
 });
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: fetchWithTimeout COM RATE LIMITING E RETRY
+// 🔹 FETCH COM RATE LIMITING
 // 🔹 ============================================
 async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) {
     try {
-        // Aguarda rate limiting
         await rateLimiter.wait();
         
         const controller = new AbortController();
@@ -153,14 +149,12 @@ async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) 
         
         clearTimeout(timeoutId);
         
-        // Verifica se a resposta é HTML (erro de rate limit)
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('text/html')) {
             console.warn(`⚠️ Resposta HTML recebida (possível rate limit) - Status: ${response.status}`);
             throw new Error('HTML_RESPONSE');
         }
         
-        // Verifica status HTTP
         if (response.status === 429 || response.status === 403) {
             console.warn(`⚠️ Rate limit detectado (${response.status}), aguardando...`);
             const waitTime = RETRY_DELAY * (retryCount + 1) * 2;
@@ -176,7 +170,6 @@ async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT, retryCount = 0) 
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
-        // Tenta parsear como JSON
         try {
             const data = await response.json();
             return data;
@@ -269,9 +262,7 @@ if (!db.jogosNotificadosPermanentes) db.jogosNotificadosPermanentes = {};
 if (!db.ultimaNotificacaoPromocao) db.ultimaNotificacaoPromocao = {};
 if (!db.ultimaMensagemRankingId) db.ultimaMensagemRankingId = null;
 
-// 🔹 ============================================
 // 🔹 RANKING
-// 🔹 ============================================
 const rankingPadrao = {
     "76561198127320557": { nome: "Gardemi", jogos: 98, steamId: "76561198127320557", discordId: "663789211152941065" },
     "76561197967265286": { nome: "Marlon", jogos: 56, steamId: "76561197967265286", discordId: "1022183877114069083" },
@@ -311,7 +302,7 @@ const gameNameCache = {};
 const achievementNameCache = {};
 
 // 🔹 ============================================
-// 🔹 FUNÇÕES AUXILIARES (COM RATE LIMITING)
+// 🔹 FUNÇÕES AUXILIARES
 // 🔹 ============================================
 async function getGameDetails(appid) {
     if (gameNameCache[appid]) return gameNameCache[appid];
@@ -454,9 +445,6 @@ async function buscarJogoSteam(nomeJogo) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogoFamilia (OTIMIZADA)
-// 🔹 ============================================
 async function verificarJogoFamilia(appid) {
     const donos = [];
     const steamIds = process.env.STEAM_IDS.split(',').map(id => id.trim());
@@ -483,9 +471,6 @@ async function verificarJogoFamilia(appid) {
     return donos;
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPrecoJogo (OTIMIZADA)
-// 🔹 ============================================
 async function verificarPrecoJogo(appid) {
     try {
         const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=br`;
@@ -513,9 +498,6 @@ async function verificarPrecoJogo(appid) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarDisponibilidadeJogo
-// 🔹 ============================================
 async function verificarDisponibilidadeJogo(appid) {
     try {
         const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
@@ -548,9 +530,6 @@ async function verificarDisponibilidadeJogo(appid) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: buscarAppIdPorNome
-// 🔹 ============================================
 async function buscarAppIdPorNome(nomeJogo) {
     try {
         const url = `https://store.steampowered.com/api/storesearch?term=${encodeURIComponent(nomeJogo)}&l=portuguese&cc=BR&max=1`;
@@ -571,9 +550,6 @@ async function buscarAppIdPorNome(nomeJogo) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: buscarListaDesejosSteam
-// 🔹 ============================================
 async function buscarListaDesejosSteam(steamId) {
     try {
         const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?key=${process.env.STEAM_KEY}&steamid=${steamId}`;
@@ -589,9 +565,6 @@ async function buscarListaDesejosSteam(steamId) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: adicionarQuero
-// 🔹 ============================================
 async function adicionarQuero(discordId, appid, nomeJogo, link) {
     if (!db.listaQuero[discordId]) {
         db.listaQuero[discordId] = [];
@@ -687,9 +660,6 @@ function registrarJogoNotificadoPermanente(appid, nomeJogo, steamId) {
     console.log(`💾 Jogo ${nomeJogo} (${appid}) registrado como notificado permanentemente`);
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarListaDesejosComprados
-// 🔹 ============================================
 async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorSteamId, compradorNome) {
     console.log(`🔍 Verificando lista de desejos para ${jogoNome}...`);
 
@@ -725,9 +695,6 @@ async function verificarListaDesejosComprados(jogoAppid, jogoNome, compradorStea
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoes
-// 🔹 ============================================
 async function verificarPromocoes() {
     console.log(`🔄 Verificando promoções diárias...`);
 
@@ -850,9 +817,6 @@ async function verificarPromocoes() {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoesQuero
-// 🔹 ============================================
 async function verificarPromocoesQuero() {
     console.log(`🔄 Verificando promoções da lista /quero...`);
 
@@ -922,9 +886,6 @@ async function verificarPromocoesQuero() {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogosCompradosQuero
-// 🔹 ============================================
 async function verificarJogosCompradosQuero() {
     console.log(`🔄 Verificando jogos comprados da lista /quero...`);
 
@@ -980,9 +941,6 @@ async function verificarJogosCompradosQuero() {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogosCompradosFamiliaQuero
-// 🔹 ============================================
 async function verificarJogosCompradosFamiliaQuero() {
     console.log(`🔄 Verificando jogos da família comprados da lista /quero...`);
 
@@ -1047,9 +1005,6 @@ async function verificarJogosCompradosFamiliaQuero() {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarJogosNaoLancadosQuero
-// 🔹 ============================================
 async function verificarJogosNaoLancadosQuero() {
     console.log(`🔄 Verificando jogos não lançados da lista /quero...`);
 
@@ -1119,9 +1074,6 @@ async function verificarJogosNaoLancadosQuero() {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarCompatibilidadeFamilia
-// 🔹 ============================================
 async function verificarCompatibilidadeFamilia(appid) {
     if (compatibilidadeCache[appid] !== undefined) {
         return compatibilidadeCache[appid];
@@ -1161,9 +1113,6 @@ async function verificarCompatibilidadeFamilia(appid) {
     return true;
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: contarDLCs
-// 🔹 ============================================
 async function contarDLCs(appid) {
     try {
         const url = `https://store.steampowered.com/api/appdetails?appids=${appid}&l=portuguese`;
@@ -1182,9 +1131,6 @@ async function contarDLCs(appid) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: buscarSugestoesJogos
-// 🔹 ============================================
 async function buscarSugestoesJogos(termo) {
     try {
         if (!termo || termo.length === 0) {
@@ -1193,12 +1139,7 @@ async function buscarSugestoesJogos(termo) {
                 { name: 'Counter-Strike 2', value: 'Counter-Strike 2' },
                 { name: 'Dying Light', value: 'Dying Light' },
                 { name: 'Sonic Frontiers', value: 'Sonic Frontiers' },
-                { name: 'Stardew Valley', value: 'Stardew Valley' },
-                { name: 'Hollow Knight', value: 'Hollow Knight' },
-                { name: 'Cyberpunk 2077', value: 'Cyberpunk 2077' },
-                { name: 'Grand Theft Auto V', value: 'Grand Theft Auto V' },
-                { name: 'Red Dead Redemption 2', value: 'Red Dead Redemption 2' },
-                { name: 'The Witcher 3', value: 'The Witcher 3' }
+                { name: 'Stardew Valley', value: 'Stardew Valley' }
             ];
         }
 
@@ -1253,9 +1194,6 @@ async function buscarSugestoesJogos(termo) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: verificarConquistas
-// 🔹 ============================================
 async function verificarConquistas(steamId, games, mention, userName) {
     if (!games?.length) return;
 
@@ -1267,8 +1205,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
 
     const jogosRecentes = [];
     const agora = Math.floor(Date.now() / 1000);
-    const ultimas24h = agora - (24 * 60 * 60);
-    const ultimas72h = agora - (72 * 60 * 60);
 
     const jogoAtual = await getCurrentGame(steamId);
     if (jogoAtual) {
@@ -1420,9 +1356,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: gerarRanking
-// 🔹 ============================================
 function gerarRanking() {
     const rankingArray = Object.values(ranking).sort((a, b) => b.jogos - a.jogos);
 
@@ -1447,9 +1380,6 @@ function gerarRanking() {
     return embed;
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: enviarRanking
-// 🔹 ============================================
 async function enviarRanking() {
     db.ranking = ranking;
     salvarDB(db);
@@ -1501,9 +1431,6 @@ async function verificarSuporteFamilia(appid) {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: checkSteamGames (PRINCIPAL)
-// 🔹 ============================================
 async function checkSteamGames() {
     const inicio = Date.now();
     console.log(`🔄 [${new Date().toLocaleTimeString()}] VERIFICANDO...`);
@@ -1633,9 +1560,6 @@ async function checkSteamGames() {
     }
 }
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: registrarComandos
-// 🔹 ============================================
 async function registrarComandos() {
     try {
         const commands = [
@@ -1707,11 +1631,7 @@ async function registrarComandos() {
     }
 }
 
-// 🔹 ============================================
-// 🔹 EVENTO: INTERACTION CREATE
-// 🔹 ============================================
 client.on('interactionCreate', async (interaction) => {
-    // Autocomplete
     if (interaction.isAutocomplete()) {
         if (interaction.commandName === 'tem') {
             const valorDigitado = interaction.options.getString('jogo')?.toLowerCase() || '';
@@ -1728,7 +1648,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // Comandos
     if (interaction.isChatInputCommand()) {
         // /tem
         if (interaction.commandName === 'tem') {
@@ -2112,9 +2031,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// 🔹 ============================================
-// 🔹 EVENTO: MESSAGE CREATE (COMANDOS NO CHAT)
-// 🔹 ============================================
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -2160,9 +2076,6 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// 🔹 ============================================
-// 🔹 FUNÇÃO: restaurarRankingDoCanal
-// 🔹 ============================================
 async function restaurarRankingDoCanal() {
     const channel = client.channels.cache.get(CHANNEL_RANKING);
     if (!channel) {
@@ -2234,7 +2147,30 @@ async function restaurarRankingDoCanal() {
 }
 
 // 🔹 ============================================
-// 🔹 EVENTO: READY
+// 🔹 HEALTH CHECK COM HTTP (SEM EXPRESS)
+// 🔹 ============================================
+const server = http.createServer((req, res) => {
+    if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            status: 'ok',
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString(),
+            memory: process.memoryUsage()
+        }));
+    } else {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('Bot is running!');
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ Health check rodando na porta ${PORT}`);
+});
+
+// 🔹 ============================================
+// 🔹 READY
 // 🔹 ============================================
 client.once('ready', async () => {
     console.log(`✅ Bot online como ${client.user.tag}`);
@@ -2247,7 +2183,6 @@ client.once('ready', async () => {
     console.log(`🔄 Rate limit: ${rateLimiter.minDelay}ms entre requisições`);
     console.log(`🔄 Max retries: ${MAX_RETRIES} tentativas`);
 
-    // Tenta restaurar o ranking do canal
     const rankingRestaurado = await restaurarRankingDoCanal();
     if (!rankingRestaurado) {
         console.log('ℹ️ Usando ranking do banco de dados (ou valores padrão).');
@@ -2280,61 +2215,16 @@ client.once('ready', async () => {
 });
 
 // 🔹 ============================================
-// 🔹 HEALTH CHECK PARA RAILWAY
-// 🔹 ============================================
-const express = require('express');
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get('/health', (req, res) => {
-    res.status(200).json({
-        status: 'ok',
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        memory: process.memoryUsage(),
-        rateLimit: {
-            delay: rateLimiter.minDelay,
-            lastRequest: new Date(rateLimiter.lastRequest).toISOString()
-        },
-        db: {
-            file: DB_FILE,
-            listaQuero: Object.values(db.listaQuero).reduce((acc, arr) => acc + arr.length, 0),
-            notificados: Object.keys(db.jogosNotificadosPermanentes).length
-        }
-    });
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Health check rodando na porta ${PORT}`);
-});
-
-// 🔹 ============================================
 // 🔹 EVENTOS DE DESLIGAMENTO
 // 🔹 ============================================
 process.on('SIGINT', async () => {
     console.log('⚠️ Bot sendo desligado...');
-    try {
-        const dono = await client.users.fetch(DONO_ID);
-        if (dono) {
-            await dono.send('🛑 **Bot Steam Família foi desligado!**');
-        }
-    } catch (error) {
-        console.error('❌ Erro ao enviar DM:', error);
-    }
     salvarDB(db);
     process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
     console.log('⚠️ Bot sendo encerrado...');
-    try {
-        const dono = await client.users.fetch(DONO_ID);
-        if (dono) {
-            await dono.send('🛑 **Bot Steam Família foi encerrado!**');
-        }
-    } catch (error) {
-        console.error('❌ Erro ao enviar DM:', error);
-    }
     salvarDB(db);
     process.exit(0);
 });
