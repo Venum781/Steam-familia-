@@ -101,7 +101,6 @@ function carregarDB() {
       const data = fs.readFileSync(DB_FILE, 'utf8');
       const parsed = JSON.parse(data);
       
-      // 🔹 GARANTE QUE TODAS AS ESTRUTURAS EXISTAM
       if (!parsed.ranking) parsed.ranking = {};
       if (!parsed.conquistas) parsed.conquistas = {};
       if (!parsed.jogosRecentes) parsed.jogosRecentes = {};
@@ -109,21 +108,16 @@ function carregarDB() {
       if (!parsed.steamLinks) parsed.steamLinks = {};
       if (!parsed.jogosNotificados) parsed.jogosNotificados = {};
       if (!parsed.jogosNotificadosPermanentes) parsed.jogosNotificadosPermanentes = {};
+      if (!parsed.listaQuero) parsed.listaQuero = {};
       
-      // 🔹 NUNCA SOBRESCREVE A LISTA /quero
-      if (!parsed.listaQuero) {
-        parsed.listaQuero = {};
-      }
-      
-      // 🔹 LOG PARA VERIFICAR O QUE FOI CARREGADO
       const totalJogos = Object.values(parsed.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
       console.log(`📊 Banco de dados carregado: ${totalJogos} jogos na lista /quero`);
+      console.log(`📊 Jogos notificados permanentemente: ${Object.keys(parsed.jogosNotificadosPermanentes).length}`);
       
       return parsed;
     }
   } catch (error) {
     console.error('❌ Erro ao carregar banco:', error);
-    // 🔹 FAZ BACKUP DO ARQUIVO CORROMPIDO
     if (fs.existsSync(DB_FILE)) {
       const backupPath = `${DB_FILE}.backup_${Date.now()}`;
       fs.copyFileSync(DB_FILE, backupPath);
@@ -131,7 +125,6 @@ function carregarDB() {
     }
   }
   
-  // 🔹 CRIA BANCO DE DADOS NOVO COM ESTRUTURAS VAZIAS
   console.log('📝 Criando novo banco de dados...');
   return { 
     conquistas: {}, 
@@ -450,7 +443,7 @@ async function verificarPrecoJogo(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarDisponibilidadeJogo (CORRIGIDA)
+// 🔹 FUNÇÃO: verificarDisponibilidadeJogo
 // 🔹 ============================================
 async function verificarDisponibilidadeJogo(appid) {
   try {
@@ -751,7 +744,7 @@ function registrarJogoNotificado(steamId, appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoes (ATUALIZADA)
+// 🔹 FUNÇÃO: verificarPromocoes (CORRIGIDA - SEM REPETIÇÃO)
 // 🔹 ============================================
 async function verificarPromocoes() {
   console.log(`🔄 Verificando promoções automaticamente...`);
@@ -776,11 +769,9 @@ async function verificarPromocoes() {
     
     console.log(`📋 ${userName} tem ${lista.length} jogos na lista de desejos`);
     
-    const listaEmbaralhada = lista.sort(() => Math.random() - 0.5);
-    
     let notificacoesEnviadas = 0;
     
-    for (const appid of listaEmbaralhada) {
+    for (const appid of lista) {
       if (jogoJaNotificadoPermanente(appid)) {
         console.log(`ℹ️ Jogo ${appid} já foi notificado em promoção anteriormente.`);
         continue;
@@ -823,7 +814,6 @@ async function verificarPromocoes() {
         notificacoesEnviadas++;
         
         registrarNotificacaoPromocao(steamId);
-        registrarJogoNotificado(appid, steamId);
         registrarJogoNotificadoPermanente(appid, preco.nome, steamId);
       }
       
@@ -2045,7 +2035,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // 🔹 COMANDO /dbstatus (NOVO)
+  // 🔹 COMANDO /dbstatus
   if (interaction.isChatInputCommand() && interaction.commandName === 'dbstatus') {
     if (interaction.user.id !== DONO_ID) {
       await interaction.reply({
