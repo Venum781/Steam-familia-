@@ -78,7 +78,7 @@ const JOGOS_INCOMPATIVEIS = {
   1392860: "Little Nightmares III",
   1328670: "Mass Effect Legendary Edition",
   204100: "Max Payne 3",
-  555160: "Pavlov VR",
+  555160: "Pavlov VR1",
   2129530: "REANIMAL",
   1174180: "Red Dead Redemption 2",
   2215260: "Scott Pilgrim vs. The World: The Game – Complete Edition",
