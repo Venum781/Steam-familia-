@@ -105,12 +105,13 @@ function carregarDB() {
       if (!parsed.jogosRecentes) parsed.jogosRecentes = {};
       if (!parsed.promocoes) parsed.promocoes = {};
       if (!parsed.steamLinks) parsed.steamLinks = {};
+      if (!parsed.jogosNotificados) parsed.jogosNotificados = {};
       return parsed;
     }
   } catch (error) {
     console.error('❌ Erro ao carregar banco:', error);
   }
-  return { conquistas: {}, jogosRecentes: {}, ranking: {}, promocoes: {}, steamLinks: {} };
+  return { conquistas: {}, jogosRecentes: {}, ranking: {}, promocoes: {}, steamLinks: {}, jogosNotificados: {} };
 }
 
 function salvarDB(db) {
@@ -128,6 +129,7 @@ if (!db.jogosRecentes) db.jogosRecentes = {};
 if (!db.ranking) db.ranking = {};
 if (!db.promocoes) db.promocoes = {};
 if (!db.steamLinks) db.steamLinks = {};
+if (!db.jogosNotificados) db.jogosNotificados = {};
 
 // 🔹 ============================================
 // 🔹 RANKING (COM PERSISTÊNCIA CORRIGIDA)
@@ -468,10 +470,45 @@ function registrarNotificacaoPromocao(steamId) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: verificarPromocoes (APENAS PARA TESTE)
+// 🔹 FUNÇÃO: jogoJaNotificado (NOVA)
+// 🔹 ============================================
+function jogoJaNotificado(steamId, appid) {
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  
+  if (!db.jogosNotificados[steamId]) {
+    db.jogosNotificados[steamId] = {};
+  }
+  
+  if (!db.jogosNotificados[steamId][hoje]) {
+    db.jogosNotificados[steamId][hoje] = [];
+  }
+  
+  return db.jogosNotificados[steamId][hoje].includes(appid);
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: registrarJogoNotificado (NOVA)
+// 🔹 ============================================
+function registrarJogoNotificado(steamId, appid) {
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  
+  if (!db.jogosNotificados[steamId]) {
+    db.jogosNotificados[steamId] = {};
+  }
+  
+  if (!db.jogosNotificados[steamId][hoje]) {
+    db.jogosNotificados[steamId][hoje] = [];
+  }
+  
+  db.jogosNotificados[steamId][hoje].push(appid);
+  salvarDB(db);
+}
+
+// 🔹 ============================================
+// 🔹 FUNÇÃO: verificarPromocoes (AUTOMÁTICA E SEM REPETIÇÃO)
 // 🔹 ============================================
 async function verificarPromocoes() {
-  console.log(`🔄 Verificando promoções para TESTE (apenas Venum)...`);
+  console.log(`🔄 Verificando promoções automaticamente...`);
   
   const channelPromocoes = client.channels.cache.get(CHANNEL_PROMOCOES);
   if (!channelPromocoes) {
@@ -483,21 +520,29 @@ async function verificarPromocoes() {
     const steamId = TEST_STEAM_ID;
     const userName = steamNames[steamId] || 'Venum';
     const mention = `<@${TEST_DISCORD_ID}>`;
+    const hoje = new Date().toLocaleDateString('pt-BR');
     
     const lista = await buscarListaDesejos(steamId);
     
     if (lista.length === 0) {
       console.log(`ℹ️ Sua lista de desejos está vazia.`);
-      await channelPromocoes.send(`📭 **${mention}**, sua lista de desejos está vazia! Adicione alguns jogos para receber notificações de promoções.`);
       return;
     }
     
     console.log(`📋 ${userName} tem ${lista.length} jogos na lista de desejos`);
     
+    const listaEmbaralhada = lista.sort(() => Math.random() - 0.5);
+    
     let notificacoesEnviadas = 0;
     
-    for (const jogo of lista) {
+    for (const jogo of listaEmbaralhada) {
       const appid = jogo.appid;
+      
+      if (jogoJaNotificado(steamId, appid)) {
+        console.log(`ℹ️ Jogo ${appid} já foi notificado hoje.`);
+        continue;
+      }
+      
       const preco = await verificarPrecoJogo(appid);
       
       if (!preco) continue;
@@ -523,7 +568,7 @@ async function verificarPromocoes() {
             `🔗 **[Comprar na Steam](${preco.link})**`
           )
           .setThumbnail(`https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`)
-          .setFooter({ text: 'Steam Família - Promoções (TESTE)' })
+          .setFooter({ text: 'Steam Família - Promoções' })
           .setTimestamp();
         
         await channelPromocoes.send({ 
@@ -533,14 +578,16 @@ async function verificarPromocoes() {
         
         console.log(`✅ Promoção detectada: ${preco.nome} (${preco.desconto}%) para ${userName}`);
         notificacoesEnviadas++;
+        
         registrarNotificacaoPromocao(steamId);
+        registrarJogoNotificado(steamId, appid);
       }
       
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     if (notificacoesEnviadas === 0) {
-      console.log(`ℹ️ Nenhuma promoção encontrada para ${userName} hoje.`);
+      console.log(`ℹ️ Nenhuma promoção nova encontrada para ${userName} hoje.`);
     } else {
       console.log(`✅ ${notificacoesEnviadas} promoções notificadas para ${userName}`);
     }
@@ -981,7 +1028,7 @@ async function verificarSuporteFamilia(appid) {
 }
 
 // 🔹 ============================================
-// 🔹 FUNÇÃO: checkSteamGames
+// 🔹 FUNÇÃO: checkSteamGames (COM PROMOÇÕES)
 // 🔹 ============================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -1061,6 +1108,9 @@ async function checkSteamGames() {
       console.log('🔍 Monitorando NOVAS conquistas em tempo real!');
       salvarDB(db);
       console.log('✅ SISTEMA INICIALIZADO! Conquistas salvas. Monitorando novas conquistas!');
+      
+      // 🔹 ADICIONADO: Verifica promoções na primeira execução
+      await verificarPromocoes();
     }
 
     const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
@@ -1095,8 +1145,8 @@ async function registrarComandos() {
         description: 'Mostra o ranking da biblioteca da família'
       },
       {
-        name: 'testepromocoes',
-        description: '[TESTE] Verifica promoções na sua lista de desejos'
+        name: 'limparnotificados',
+        description: '[DONO] Limpa a lista de jogos notificados hoje'
       }
     ];
 
@@ -1193,10 +1243,10 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  if (interaction.isChatInputCommand() && interaction.commandName === 'testepromocoes') {
+  if (interaction.isChatInputCommand() && interaction.commandName === 'limparnotificados') {
     if (interaction.user.id !== TEST_DISCORD_ID) {
       await interaction.reply({
-        content: '❌ Este comando está em fase de teste e só está disponível para o Venum.',
+        content: '❌ Apenas o dono pode usar este comando.',
         ephemeral: true
       });
       return;
@@ -1205,14 +1255,22 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ ephemeral: true });
     
     try {
-      await verificarPromocoes();
-      await interaction.editReply({
-        content: '✅ Verificação de promoções concluída! Confira o canal #promocoes.'
-      });
+      const hoje = new Date().toLocaleDateString('pt-BR');
+      if (db.jogosNotificados[TEST_STEAM_ID]) {
+        db.jogosNotificados[TEST_STEAM_ID][hoje] = [];
+        salvarDB(db);
+        await interaction.editReply({
+          content: '✅ Lista de jogos notificados hoje foi limpa!'
+        });
+      } else {
+        await interaction.editReply({
+          content: 'ℹ️ Nenhum jogo foi notificado hoje ainda.'
+        });
+      }
     } catch (error) {
-      console.error('❌ Erro no comando /testepromocoes:', error);
+      console.error('❌ Erro no comando /limparnotificados:', error);
       await interaction.editReply({
-        content: '❌ Ocorreu um erro ao verificar as promoções.'
+        content: '❌ Ocorreu um erro ao limpar a lista.'
       });
     }
   }
@@ -1310,7 +1368,7 @@ client.once('ready', async () => {
   try {
     const dono = await client.users.fetch(DONO_ID);
     if (dono) {
-      await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite /ranking\n🔎 Use /tem [jogo]\n🧪 Use /testepromocoes para testar promoções`);
+      await dono.send(`🚀 **Bot Steam Família está online!**\n⏰ Verificando a cada ${INTERVALO_VERIFICACAO / 1000} segundos\n🔍 Monitorando jogos e conquistas\n📊 Digite /ranking\n🔎 Use /tem [jogo]\n🛒 Promoções sendo verificadas automaticamente!`);
     }
   } catch (error) {
     console.error('❌ Erro ao enviar DM para o dono:', error);
@@ -1326,6 +1384,7 @@ client.once('ready', async () => {
   setInterval(async () => {
     try {
       await checkSteamGames();
+      await verificarPromocoes(); // ← VERIFICA PROMOÇÕES AUTOMATICAMENTE
     } catch (error) {
       console.error('❌ Erro no intervalo:', error);
     }
