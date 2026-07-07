@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM LOG DOS 3 JOGOS RECENTES
+// BOT STEAM FAMÍLIA - COM LOG DE POSIÇÃO DOS JOGOS RECENTES
 // ============================================================
 
 require('dotenv').config();
@@ -676,7 +676,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM LOG DOS 3 RECENTES)
+// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM LOG DE POSIÇÃO)
 // ============================================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -704,9 +704,9 @@ async function checkSteamGames() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      // 🔥 NOVO LOG: mostra os 3 jogos recentes de cada membro
-      const nomesJogos = recentGames.map(g => g.name || g.appid).join(', ') || 'nenhum jogo';
-      console.log(`📋 ${userName}: jogos recentes -> ${nomesJogos}`);
+      // 🔥 NOVO LOG: mostra a POSIÇÃO de cada jogo recente (1º, 2º, 3º)
+      const listaComPosicao = recentGames.map((g, i) => `${i+1}º: ${g.name || g.appid}`).join(' | ');
+      console.log(`📋 ${userName}: jogos recentes -> ${listaComPosicao || 'nenhum jogo'}`);
 
       await verificarConquistas(steamId, recentGames, mention, userName);
 
@@ -895,7 +895,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot online! Logs mostram os 3 jogos recentes de cada membro.');
+    await dono.send('🚀 Bot online! Logs mostram posição dos jogos recentes (1º, 2º, 3º).');
   } catch (_) {}
 });
 
