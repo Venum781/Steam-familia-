@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO FINAL CORRIGIDA
+// BOT STEAM FAMÍLIA - COM VERIFICAÇÃO DE COMPATIBILIDADE
 // ============================================================
 
 require('dotenv').config();
@@ -257,6 +257,107 @@ function extrairAppIdDaUrl(url) {
 }
 
 // ============================================================
+// 4.1. VERIFICAÇÃO DE COMPATIBILIDADE COM FAMILY SHARING
+// ============================================================
+// Lista de jogos conhecidos como incompatíveis (mantida manualmente)
+const JOGOS_INCOMPATIVEIS = {
+  33930: "Arma 2: Operation Arrowhead",
+  107410: "Arma 3",
+  582660: "Black Desert",
+  1097150: "Fall Guys",
+  220240: "Far Cry 3",
+  298110: "Far Cry 4",
+  552520: "Far Cry 5",
+  304390: "FOR HONOR",
+  1546970: "Grand Theft Auto III – The Definitive Edition",
+  12210: "Grand Theft Auto IV: The Complete Edition",
+  3240220: "Grand Theft Auto V Enhanced",
+  271590: "Grand Theft Auto V Legacy",
+  1547000: "Grand Theft Auto: San Andreas – The Definitive Edition",
+  1546990: "Grand Theft Auto: Vice City – The Definitive Edition",
+  439700: "H1Z1: King of the Kill Test Server",
+  269210: "Hero Siege",
+  1426210: "It Takes Two",
+  510190: "Lazarus",
+  1392860: "Little Nightmares III",
+  1328670: "Mass Effect Legendary Edition",
+  204100: "Max Payne 3",
+  555160: "Pavlov VR",
+  2129530: "REANIMAL",
+  1174180: "Red Dead Redemption 2",
+  2215260: "Scott Pilgrim vs. The World: The Game – Complete Edition",
+  488790: "South Park: The Fractured But Whole",
+  2001120: "Split Fiction",
+  1172380: "STAR WARS Jedi: Fallen Order",
+  1774580: "STAR WARS Jedi: Survivor",
+  1527280: "Starship Tunnel",
+  470220: "UNO",
+  447040: "Watch Dogs 2",
+  1222700: "A Way Out"
+};
+
+// Cache para compatibilidade (evita chamadas repetidas)
+const compatibilidadeCache = {};
+
+async function verificarCompatibilidadeFamilia(appid) {
+  // Verifica cache
+  if (compatibilidadeCache[appid] !== undefined) {
+    return compatibilidadeCache[appid];
+  }
+
+  // 1. Verifica lista manual
+  if (JOGOS_INCOMPATIVEIS[appid]) {
+    console.log(`📋 Lista manual: Jogo ${appid} NÃO é compatível (${JOGOS_INCOMPATIVEIS[appid]})`);
+    compatibilidadeCache[appid] = false;
+    return false;
+  }
+
+  // 2. Tenta consultar SteamDB (API pública)
+  try {
+    const url = `https://steamdb.info/api/v1/appdetails/?appid=${appid}`;
+    const resp = await axios.get(url, { timeout: 8000 });
+    if (resp.data && resp.data.data) {
+      const appData = resp.data.data;
+      // Campos que indicam incompatibilidade
+      const excludeFromFamilySharing = appData.exclude_from_family_sharing || false;
+      const isFree = appData.is_free || false;
+      const requiresAccount = appData.requires_account || false;
+
+      if (excludeFromFamilySharing || isFree || requiresAccount) {
+        console.log(`❌ SteamDB: Jogo ${appid} NÃO é compatível`);
+        compatibilidadeCache[appid] = false;
+        return false;
+      }
+    }
+  } catch (err) {
+    // Fallback: assume compatível se não conseguir verificar
+    console.log(`⚠️ SteamDB falhou para ${appid}, assumindo compatível.`);
+  }
+
+  // 3. Verifica na página da Steam (fallback)
+  try {
+    const url = `https://store.steampowered.com/app/${appid}`;
+    const resp = await axios.get(url, { timeout: 8000 });
+    const html = resp.data;
+    // Verifica se contém indicação de incompatibilidade
+    if (html.includes('Compartilhamento em família não disponível') ||
+        html.includes('Family Sharing not available') ||
+        html.includes('exclude_from_family_sharing')) {
+      console.log(`❌ Steam Store: Jogo ${appid} NÃO é compatível`);
+      compatibilidadeCache[appid] = false;
+      return false;
+    }
+  } catch (err) {
+    // Ignora erro na página da Steam
+  }
+
+  // Se passou por todas as verificações, é compatível
+  console.log(`✅ Jogo ${appid} é compatível com Família Steam`);
+  compatibilidadeCache[appid] = true;
+  return true;
+}
+
+// ============================================================
 // 5. FUNÇÕES DE NEGÓCIO (lista /quero)
 // ============================================================
 async function adicionarQuero(discordId, appid, nome, link) {
@@ -507,7 +608,7 @@ async function verificarLancamentosQuero() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE PROMOÇÕES COM DETECÇÃO DE MUDANÇA DE ESTADO
+// 10. VERIFICAÇÃO DE PROMOÇÕES
 // ============================================================
 async function verificarPromocoesQuero() {
   console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções...`);
@@ -602,12 +703,9 @@ async function checkSteamGames() {
 
       await verificarConquistas(steamId, currentGames, mention, userName);
 
-      // 🔥 CRUCIAL: Inicializar previousGames se for a primeira execução
       if (!previousGames[steamId]) {
-        // Se não há histórico salvo, usa a lista atual (sem notificar)
         previousGames[steamId] = currentGames;
         console.log(`📊 ${userName}: ${currentGames.length} jogos (histórico inicial salvo)`);
-        // Atualiza o histórico no banco também
         db.historicoJogos[steamId] = currentGames.map(g => g.appid);
         salvarDB(db);
         continue;
@@ -637,10 +735,9 @@ async function checkSteamGames() {
           if (db.ranking[steamId]) {
             db.ranking[steamId].jogos += 1;
             salvarDB(db);
-            await enviarRanking(); // ✅ Atualiza ranking no canal
+            await enviarRanking();
           }
 
-          // Remove da lista /quero de quem tinha
           for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
             if (!jogos) continue;
             for (const j of jogos) {
@@ -733,25 +830,18 @@ client.once('ready', async () => {
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
 
-  // 🔥 NÃO ENVIA RANKING AUTOMATICAMENTE NA INICIALIZAÇÃO
-
-  // Carrega o histórico de jogos do banco, se existir
   if (db.historicoJogos && Object.keys(db.historicoJogos).length > 0) {
     console.log('📚 Histórico de jogos carregado do banco de dados.');
-    // Restaura previousGames a partir do banco
     for (const steamId of STEAM_IDS_ARRAY) {
       if (db.historicoJogos[steamId]) {
         const games = await getOwnedGames(steamId);
-        // Filtra apenas os jogos que estão no histórico (para manter o estado)
         const historicoIds = db.historicoJogos[steamId];
         previousGames[steamId] = games
           .filter(g => historicoIds.includes(g.appid))
           .map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
-        // Se o histórico estiver incompleto, adiciona os faltantes
         const currentIds = games.map(g => g.appid);
         const missingIds = historicoIds.filter(id => !currentIds.includes(id));
         if (missingIds.length > 0) {
-          // Atualiza o histórico com os IDs atuais (jogos que sumiram)
           db.historicoJogos[steamId] = currentIds;
           salvarDB(db);
         }
@@ -771,7 +861,6 @@ client.once('ready', async () => {
     salvarDB(db);
   }
 
-  // Agora inicia as verificações
   await checkSteamGames();
   setInterval(checkSteamGames, 15000);
   console.log(`🔄 Monitorando jogos a cada 15 segundos`);
@@ -786,17 +875,17 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online! Ranking só é enviado em mudanças reais.');
+    await dono.send('🚀 Bot Steam Família está online!');
   } catch (_) {}
 });
 
 // ============================================================
-// 14. COMANDOS SLASH
+// 14. COMANDOS SLASH (COM VERIFICAÇÃO DE COMPATIBILIDADE)
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  // /tem
+  // /tem (COM VERIFICAÇÃO DE COMPATIBILIDADE)
   if (interaction.commandName === 'tem') {
     await interaction.deferReply({ ephemeral: true });
     try {
@@ -815,6 +904,10 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply(`❌ Não encontrei **${input}** na Steam.`);
         return;
       }
+
+      // 🔥 VERIFICA COMPATIBILIDADE COM FAMILY SHARING
+      const isCompatible = await verificarCompatibilidadeFamilia(info.appid);
+
       const donos = [];
       for (const sid of STEAM_IDS_ARRAY) {
         if ((db.historicoJogos[sid] || []).includes(info.appid)) {
@@ -822,12 +915,31 @@ client.on('interactionCreate', async (interaction) => {
           if (m) donos.push({ nome: m.nome, discordId: m.discordId });
         }
       }
+
       const embed = new EmbedBuilder()
         .setColor(donos.length > 0 ? 0x00FF00 : 0xFF0000)
         .setTitle(`${donos.length > 0 ? '✅' : '❌'} ${info.nome}`)
         .setURL(info.link)
-        .setFooter({ text: 'Steam Família' });
+        .setFooter({ text: 'Steam Família - /tem' })
+        .setTimestamp();
+
       if (info.capa) embed.setThumbnail(info.capa);
+
+      // Adiciona campo de compatibilidade
+      if (isCompatible) {
+        embed.addFields({
+          name: '✅ Compatível com Família Steam',
+          value: 'Este jogo pode ser compartilhado com a família.',
+          inline: false
+        });
+      } else {
+        embed.addFields({
+          name: '❌ INCOMPATÍVEL com Família Steam',
+          value: '⚠️ **Este jogo NÃO pode ser compartilhado via Família Steam!**\n\nVerifique a página do jogo para mais informações.',
+          inline: false
+        });
+      }
+
       if (donos.length) {
         let desc = `🎮 **${donos.length} membro(s) possui(em):**\n`;
         donos.forEach((d, i) => desc += `**${i+1}.** <@${d.discordId}>\n`);
@@ -835,13 +947,15 @@ client.on('interactionCreate', async (interaction) => {
       } else {
         embed.setDescription('😕 **Nenhum membro da família possui este jogo.**');
       }
+
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
+      console.error('❌ Erro no /tem:', err);
       await interaction.editReply(`❌ Erro: ${err.message}`);
     }
   }
 
-  // /ranking (EFÊMERO – só quem usou vê)
+  // /ranking
   if (interaction.commandName === 'ranking') {
     await interaction.deferReply({ ephemeral: true });
     const embed = gerarRankingEmbed();
