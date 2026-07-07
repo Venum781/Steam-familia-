@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - CONQUISTAS APENAS EM JOGOS RECENTES
+// BOT STEAM FAMÍLIA - COM BANCO DE DADOS COMPLETO DE CONQUISTAS
 // ============================================================
 
 require('dotenv').config();
@@ -153,7 +153,6 @@ async function getOwnedGames(steamId) {
   return data?.response?.games || [];
 }
 
-// 🔥 APENAS JOGOS RECENTES (últimas 2 semanas)
 async function getRecentlyPlayedGames(steamId, limit = 10) {
   const data = await fetchSteam(
     'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/',
@@ -252,7 +251,6 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
-// 🔥 LISTA DE JOGOS INCOMPATÍVEIS
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
   107410: "Arma 3",
@@ -444,16 +442,73 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS (APENAS JOGOS RECENTES)
+// 8. INICIALIZAÇÃO COMPLETA DE CONQUISTAS (TODOS OS JOGOS JOGADOS)
+// ============================================================
+async function inicializarConquistas(steamId, userName) {
+  console.log(`🏆 ${userName}: Inicializando banco de conquistas (todos os jogos jogados)...`);
+  
+  try {
+    const allGames = await getOwnedGames(steamId);
+    // Filtra apenas jogos que já foram jogados (rtime_last_played > 0)
+    const playedGames = allGames.filter(g => g.rtime_last_played && g.rtime_last_played > 0);
+    
+    console.log(`   ${userName}: ${playedGames.length} jogos já jogados encontrados.`);
+
+    if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
+
+    let totalJogosProcessados = 0;
+    for (const game of playedGames) {
+      const appid = game.appid;
+      const gameName = game.name || `Jogo ${appid}`;
+
+      let conquistas;
+      try {
+        conquistas = await getPlayerAchievements(steamId, appid);
+      } catch (_) {
+        continue;
+      }
+      if (!conquistas || conquistas.length === 0) continue;
+
+      const desbloqueadas = conquistas.filter(c => c.achieved === 1);
+      const total = desbloqueadas.length;
+      const totalJogo = conquistas.length;
+
+      db.conquistas[steamId][appid] = {
+        total,
+        nomes: desbloqueadas.map(c => c.apiname),
+        totalJogo
+      };
+
+      totalJogosProcessados++;
+      if (totalJogosProcessados % 10 === 0) {
+        console.log(`   ${userName}: ${totalJogosProcessados} jogos processados...`);
+      }
+    }
+
+    console.log(`   ✅ ${userName}: ${totalJogosProcessados} jogos salvos no banco de conquistas.`);
+    salvarDB(db);
+
+  } catch (err) {
+    console.error(`❌ Erro ao inicializar conquistas para ${userName}:`, err);
+  }
+}
+
+// ============================================================
+// 9. VERIFICAÇÃO DE CONQUISTAS (APENAS JOGOS RECENTES)
 // ============================================================
 async function verificarConquistas(steamId, recentGames, mention, userName) {
   if (!recentGames?.length) return;
   const channel = client.channels.cache.get(ACHIEVEMENT_CHANNEL_ID);
   if (!channel) return;
 
-  if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
+  if (!db.conquistas[steamId]) {
+    console.log(`⚠️ ${userName}: Banco de conquistas não inicializado. Ignorando verificação.`);
+    return;
+  }
 
-  console.log(`🏆 ${userName}: verificando ${recentGames.length} jogos recentes para conquistas...`);
+  console.log(`🏆 ${userName}: verificando ${recentGames.length} jogos recentes para novas conquistas...`);
+
+  let novasConquistas = 0;
 
   for (const game of recentGames) {
     const appid = game.appid;
@@ -466,22 +521,20 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
       console.log(`   ⚠️ ${gameName}: erro ao buscar conquistas, pulando.`);
       continue;
     }
-    if (!conquistas || conquistas.length === 0) {
-      continue;
-    }
+    if (!conquistas || conquistas.length === 0) continue;
 
     const desbloqueadas = conquistas.filter(c => c.achieved === 1);
     const total = desbloqueadas.length;
     const totalJogo = conquistas.length;
 
-    // Se não existe estado salvo ou é a primeira execução, salva sem notificar
-    if (!db.conquistas[steamId][appid] || !primeiraVerificacaoConcluida) {
+    // Se o jogo não está no banco, inicializa (caso tenha sido jogado pela primeira vez)
+    if (!db.conquistas[steamId][appid]) {
       db.conquistas[steamId][appid] = {
         total,
         nomes: desbloqueadas.map(c => c.apiname),
         totalJogo
       };
-      console.log(`   💾 ${gameName}: ${total}/${totalJogo} conquistas salvas (estado inicial)`);
+      console.log(`   💾 ${gameName}: ${total}/${totalJogo} conquistas salvas (primeira vez)`);
       salvarDB(db);
       continue;
     }
@@ -491,6 +544,7 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
     const novas = desbloqueadas.filter(c => !antigos.includes(c.apiname));
     if (novas.length === 0) continue;
 
+    novasConquistas += novas.length;
     const faltam = totalJogo - total;
     const progresso = `${total}/${totalJogo}`;
 
@@ -523,10 +577,14 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
     };
     salvarDB(db);
   }
+
+  if (novasConquistas > 0) {
+    console.log(`   ✅ ${userName}: ${novasConquistas} nova(s) conquista(s) notificada(s).`);
+  }
 }
 
 // ============================================================
-// 9. VERIFICAÇÃO DE LANÇAMENTOS
+// 10. VERIFICAÇÃO DE LANÇAMENTOS
 // ============================================================
 async function verificarLancamentosQuero() {
   console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando lançamentos...`);
@@ -586,7 +644,7 @@ async function verificarLancamentosQuero() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE PROMOÇÕES
+// 11. VERIFICAÇÃO DE PROMOÇÕES
 // ============================================================
 async function verificarPromocoesQuero() {
   console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções...`);
@@ -652,7 +710,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS
+// 12. VERIFICAÇÃO DE NOVOS JOGOS
 // ============================================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -669,7 +727,6 @@ async function checkSteamGames() {
       const allGames = await getOwnedGames(steamId);
       if (!allGames.length) continue;
 
-      // 🔥 CONQUISTAS: APENAS jogos recentes (10 primeiros)
       const recentGames = await getRecentlyPlayedGames(steamId, 10);
 
       const member = MEMBROS[steamId];
@@ -681,10 +738,10 @@ async function checkSteamGames() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      // Verifica conquistas apenas nos jogos recentes
+      // 🔥 Verifica conquistas nos jogos recentes
       await verificarConquistas(steamId, recentGames, mention, userName);
 
-      // Monitoramento de novos jogos (para notificar compras)
+      // Monitoramento de novos jogos
       if (!previousGames[steamId]) {
         previousGames[steamId] = allGames.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
         console.log(`📊 ${userName}: ${allGames.length} jogos (histórico inicial salvo)`);
@@ -766,7 +823,7 @@ async function checkSteamGames() {
 }
 
 // ============================================================
-// 12. REGISTRO DE COMANDOS SLASH
+// 13. REGISTRO DE COMANDOS SLASH
 // ============================================================
 async function registrarComandos() {
   try {
@@ -818,13 +875,28 @@ async function registrarComandos() {
 }
 
 // ============================================================
-// 13. EVENTOS
+// 14. EVENTOS
 // ============================================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
 
+  // 🔥 INICIALIZA O BANCO DE CONQUISTAS (apenas na primeira execução)
+  if (Object.keys(db.conquistas).length === 0) {
+    console.log('🏆 Inicializando banco de conquistas para todos os membros...');
+    for (const steamId of STEAM_IDS_ARRAY) {
+      const member = MEMBROS[steamId];
+      if (member) {
+        await inicializarConquistas(steamId, member.nome);
+      }
+    }
+    console.log('✅ Banco de conquistas inicializado com sucesso!');
+  } else {
+    console.log('📚 Banco de conquistas já existe. Carregando...');
+  }
+
+  // Carrega histórico de jogos
   if (db.historicoJogos && Object.keys(db.historicoJogos).length > 0) {
     console.log('📚 Histórico de jogos carregado do banco de dados.');
     for (const steamId of STEAM_IDS_ARRAY) {
@@ -870,12 +942,12 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: conquistas apenas em jogos recentes.');
+    await dono.send('🚀 Bot atualizado: banco de dados completo de conquistas!');
   } catch (_) {}
 });
 
 // ============================================================
-// 14. COMANDOS SLASH
+// 15. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -1110,7 +1182,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 15. !resetranking
+// 16. !resetranking
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.author.id !== DONO_ID) return;
@@ -1136,7 +1208,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // ============================================================
-// 16. HEALTH CHECK
+// 17. HEALTH CHECK
 // ============================================================
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1145,7 +1217,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => console.log(`✅ Health check na porta ${PORT}`));
 
 // ============================================================
-// 17. LOGIN
+// 18. LOGIN
 // ============================================================
 client.login(DISCORD_TOKEN)
   .then(() => console.log('✅ Login bem-sucedido!'))
