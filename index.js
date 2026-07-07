@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO OTIMIZADA E CORRIGIDA
+// BOT STEAM FAMÍLIA - VERSÃO COM PERSISTÊNCIA NO VOLUME /data
 // ============================================================
 
 require('dotenv').config();
@@ -20,7 +20,7 @@ const {
   RANKING_CHANNEL_ID,
   ACHIEVEMENT_CHANNEL_ID,
   DONO_ID,
-  DATA_DIR = './data',
+  DATA_DIR = '/data',   // <--- ALTERADO PARA /data (volume persistente)
   PORT = 3000
 } = process.env;
 
@@ -47,38 +47,63 @@ const MEMBROS = {
 // ============================================================
 // 3. BANCO DE DADOS PERSISTENTE (JSON)
 // ============================================================
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  console.log(`📁 Pasta ${DATA_DIR} criada.`);
+} else {
+  console.log(`✅ Pasta ${DATA_DIR} existe.`);
+}
+
 const DB_FILE = path.join(DATA_DIR, 'steam_family_db.json');
+console.log(`💾 Banco de dados em: ${DB_FILE}`);
 
 function carregarDB() {
   try {
     if (fs.existsSync(DB_FILE)) {
       const raw = fs.readFileSync(DB_FILE, 'utf8');
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      console.log(`✅ DB carregado de ${DB_FILE}`);
+      // Garante que todas as chaves existam
+      if (!parsed.ranking) parsed.ranking = {};
+      if (!parsed.conquistas) parsed.conquistas = {};
+      if (!parsed.listaQuero) parsed.listaQuero = {};
+      if (!parsed.historicoJogos) parsed.historicoJogos = {};
+      if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
+      return parsed;
+    } else {
+      console.log(`ℹ️ DB não encontrado em ${DB_FILE}, criando novo...`);
     }
   } catch (e) {
-    console.warn('⚠️ Banco corrompido, criando backup e resetando...');
+    console.warn('⚠️ Banco corrompido, criando backup e resetando...', e);
     if (fs.existsSync(DB_FILE)) {
       fs.copyFileSync(DB_FILE, `${DB_FILE}.backup_${Date.now()}`);
     }
   }
   return {
-    ranking: {},          // { steamId: { nome, jogos, steamId, discordId } }
-    conquistas: {},       // { steamId: { appid: { total, nomes, totalJogo } } }
-    listaQuero: {},       // { discordId: [ { appid, nome, link, adicionado_em } ] }
-    historicoJogos: {},   // { steamId: [appid, ...] }
+    ranking: {},
+    conquistas: {},
+    listaQuero: {},
+    historicoJogos: {},
     ultimaMensagemRankingId: null
   };
 }
 
 function salvarDB(db) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+    const totalQuero = Object.values(db.listaQuero || {}).reduce((acc, arr) => acc + (arr ? arr.length : 0), 0);
+    console.log(`💾 DB salvo em ${DB_FILE} | /quero: ${totalQuero} jogos | Ranking: ${Object.keys(db.ranking || {}).length} membros`);
+  } catch (err) {
+    console.error('❌ Erro ao salvar DB:', err);
+  }
 }
 
 let db = carregarDB();
 
 // Inicializa ranking se vazio
-if (Object.keys(db.ranking).length === 0) {
+if (!db.ranking || Object.keys(db.ranking).length === 0) {
+  console.log('📊 Inicializando ranking...');
+  db.ranking = {};
   for (const [steamId, info] of Object.entries(MEMBROS)) {
     db.ranking[steamId] = {
       nome: info.nome,
@@ -238,7 +263,7 @@ let ultimaMensagemRankingId = db.ultimaMensagemRankingId || null;
 // 7. RANKING
 // ============================================================
 function gerarRankingEmbed() {
-  const rankingArray = Object.values(db.ranking).sort((a, b) => b.jogos - a.jogos);
+  const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
   const embed = new EmbedBuilder()
     .setColor(0x00AE86)
     .setTitle('🏆 Ranking da Biblioteca Steam 2026')
@@ -417,7 +442,8 @@ async function checkSteamGames() {
           }
 
           // Remove da lista /quero de quem tinha
-          for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero)) {
+          for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
+            if (!jogos) continue;
             for (const j of jogos) {
               if (j.appid === appid) {
                 removerQuero(discordIdQuero, appid);
@@ -502,11 +528,12 @@ async function registrarComandos() {
 // ============================================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
+  console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
   await enviarRanking();
 
   // Inicializa histórico se vazio
-  if (Object.keys(db.historicoJogos).length === 0) {
+  if (!db.historicoJogos || Object.keys(db.historicoJogos).length === 0) {
     console.log('🔄 Inicializando histórico de jogos...');
     for (const steamId of STEAM_IDS_ARRAY) {
       try {
@@ -529,7 +556,7 @@ client.once('ready', async () => {
 });
 
 // ============================================================
-// 12. COMANDOS SLASH (ATUALIZADO)
+// 12. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -620,9 +647,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // ============================================================
-  // COMANDO /quero-listar (CORRIGIDO)
-  // ============================================================
+  // /quero-listar (CORRIGIDO)
   if (interaction.commandName === 'quero-listar') {
     await interaction.deferReply({ ephemeral: true });
     try {
@@ -632,14 +657,10 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // Limita a 20 jogos para não estourar o limite do embed
       const jogosExibir = lista.slice(0, 20);
       const totalJogos = lista.length;
 
-      // Monta a descrição
       let descricao = jogosExibir.map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n');
-
-      // Se a descrição ainda for muito longa, truncamos
       if (descricao.length > 4000) {
         descricao = descricao.substring(0, 4000) + '\n... (lista truncada)';
       }
@@ -685,9 +706,9 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
     await interaction.deferReply({ ephemeral: true });
-    const totalQuero = Object.values(db.listaQuero).reduce((acc, arr) => acc + arr.length, 0);
-    const totalConquistas = Object.values(db.conquistas).reduce((acc, obj) => acc + Object.keys(obj).length, 0);
-    const msg = `📊 **Status do DB:**\n📋 /quero: ${totalQuero} jogos\n🏆 Conquistas rastreadas: ${totalConquistas}\n👥 Membros: ${Object.keys(db.ranking).length}\n💾 Arquivo: ${DB_FILE}`;
+    const totalQuero = Object.values(db.listaQuero || {}).reduce((acc, arr) => acc + (arr ? arr.length : 0), 0);
+    const totalConquistas = Object.values(db.conquistas || {}).reduce((acc, obj) => acc + Object.keys(obj || {}).length, 0);
+    const msg = `📊 **Status do DB:**\n📋 /quero: ${totalQuero} jogos\n🏆 Conquistas rastreadas: ${totalConquistas}\n👥 Membros: ${Object.keys(db.ranking || {}).length}\n💾 Arquivo: ${DB_FILE}`;
     await interaction.editReply(msg);
   }
 });
