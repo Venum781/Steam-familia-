@@ -1,3 +1,7 @@
+// ============================================================
+// BOT STEAM FAMÍLIA - VERSÃO OTIMIZADA
+// ============================================================
+
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -6,105 +10,93 @@ const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('discord.js');
 
 // ============================================================
-// CONFIGURAÇÕES
+// 1. VARIÁVEIS DE AMBIENTE (todas obrigatórias)
 // ============================================================
-const CONFIG = {
-  DISCORD_TOKEN: process.env.DISCORD_TOKEN,
-  STEAM_KEY: process.env.STEAM_KEY,
-  STEAM_IDS: process.env.STEAM_IDS ? process.env.STEAM_IDS.split(',').map(id => id.trim()) : [],
-  CHANNEL_NOTIFICACOES: process.env.CHANNEL_ID,
-  CHANNEL_RANKING: process.env.RANKING_CHANNEL_ID || '1523067407474757672',
-  CHANNEL_CONQUISTAS: process.env.ACHIEVEMENT_CHANNEL_ID || '1523080625802711150',
-  DONO_ID: process.env.DONO_ID || '336204841972137995',
-  DATA_DIR: process.env.DATA_DIR || './data',
-  PORT: process.env.PORT || 3000,
-  INTERVALO_VERIFICACAO: 15000,     // 15s
-  INTERVALO_ACHIEVEMENTS: 300000,   // 5min
-  MAX_RETRIES: 3,
-  REQUEST_TIMEOUT: 10000,
-};
+const {
+  DISCORD_TOKEN,
+  STEAM_KEY,
+  STEAM_IDS,
+  CHANNEL_ID,
+  RANKING_CHANNEL_ID,
+  ACHIEVEMENT_CHANNEL_ID,
+  DONO_ID,
+  DATA_DIR = './data',
+  PORT = 3000
+} = process.env;
 
-// Mapeamento de nomes e Discord IDs
-const STEAM_NAMES = {
-  '76561198127320557': 'Gardemi',
-  '76561197967265286': 'Marlon',
-  '76561198446717315': 'WoollySkills',
-  '76561198110004039': 'Venum',
-  '76561198848231901': 'Mosk'
-};
-const DISCORD_USERS = {
-  '76561198127320557': '663789211152941065',
-  '76561197967265286': '1022183877114069083',
-  '76561198446717315': '479817686218702849',
-  '76561198110004039': '336204841972137995',
-  '76561198848231901': '499311499504910344'
-};
+// Validação básica
+if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID) {
+  console.error('❌ Variáveis obrigatórias ausentes:');
+  console.error('  DISCORD_TOKEN, STEAM_KEY, STEAM_IDS, CHANNEL_ID');
+  process.exit(1);
+}
 
-const RANKING_PADRAO = {
-  "76561198127320557": { nome: "Gardemi", jogos: 0, steamId: "76561198127320557", discordId: "663789211152941065" },
-  "76561197967265286": { nome: "Marlon", jogos: 0, steamId: "76561197967265286", discordId: "1022183877114069083" },
-  "76561198848231901": { nome: "Mosk", jogos: 0, steamId: "76561198848231901", discordId: "499311499504910344" },
-  "76561198446717315": { nome: "WoollySkills", jogos: 0, steamId: "76561198446717315", discordId: "479817686218702849" },
-  "76561198110004039": { nome: "Venum", jogos: 0, steamId: "76561198110004039", discordId: "336204841972137995" }
+const STEAM_IDS_ARRAY = STEAM_IDS.split(',').map(id => id.trim());
+
+// ============================================================
+// 2. MAPEAMENTO DOS MEMBROS (ajuste conforme sua família)
+// ============================================================
+const MEMBROS = {
+  '76561198127320557': { nome: 'Gardemi', discordId: '663789211152941065' },
+  '76561197967265286': { nome: 'Marlon', discordId: '1022183877114069083' },
+  '76561198446717315': { nome: 'WoollySkills', discordId: '479817686218702849' },
+  '76561198110004039': { nome: 'Venum', discordId: '336204841972137995' },
+  '76561198848231901': { nome: 'Mosk', discordId: '499311499504910344' }
 };
 
 // ============================================================
-// BANCO DE DADOS
+// 3. BANCO DE DADOS PERSISTENTE (JSON)
 // ============================================================
-const DB_FILE = path.join(CONFIG.DATA_DIR, 'steam_family_db.json');
-if (!fs.existsSync(CONFIG.DATA_DIR)) fs.mkdirSync(CONFIG.DATA_DIR, { recursive: true });
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const DB_FILE = path.join(DATA_DIR, 'steam_family_db.json');
 
 function carregarDB() {
   try {
     if (fs.existsSync(DB_FILE)) {
       const raw = fs.readFileSync(DB_FILE, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (!parsed.conquistas) parsed.conquistas = {};
-      if (!parsed.ranking) parsed.ranking = {};
-      if (!parsed.listaQuero) parsed.listaQuero = {};
-      if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
-      if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {};
-      if (!parsed.historicoJogos) parsed.historicoJogos = {};
-      return parsed;
+      return JSON.parse(raw);
     }
-  } catch (err) {
-    console.error('❌ Erro ao carregar banco, criando backup...', err);
+  } catch (e) {
+    console.warn('⚠️ Banco corrompido, criando backup e resetando...');
     if (fs.existsSync(DB_FILE)) {
       fs.copyFileSync(DB_FILE, `${DB_FILE}.backup_${Date.now()}`);
     }
   }
   return {
-    conquistas: {},
-    ranking: {},
-    listaQuero: {},
-    ultimaMensagemRankingId: null,
-    jogosSemConquistas: {},
-    historicoJogos: {}
+    ranking: {},          // { steamId: { nome, jogos, steamId, discordId } }
+    conquistas: {},       // { steamId: { appid: { total, nomes, totalJogo } } }
+    listaQuero: {},       // { discordId: [ { appid, nome, link, adicionado_em } ] }
+    historicoJogos: {},   // { steamId: [appid, ...] }
+    ultimaMensagemRankingId: null
   };
 }
 
 function salvarDB(db) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-    console.log('💾 DB salvo');
-  } catch (err) {
-    console.error('❌ Erro ao salvar DB:', err);
-  }
+  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
 let db = carregarDB();
-if (!db.ranking || Object.keys(db.ranking).length === 0) {
-  db.ranking = { ...RANKING_PADRAO };
+
+// Inicializa ranking se vazio
+if (Object.keys(db.ranking).length === 0) {
+  for (const [steamId, info] of Object.entries(MEMBROS)) {
+    db.ranking[steamId] = {
+      nome: info.nome,
+      jogos: 0,
+      steamId,
+      discordId: info.discordId
+    };
+  }
   salvarDB(db);
 }
 
 // ============================================================
-// STEAM API
+// 4. FUNÇÕES DA STEAM API (com rate limit e retry)
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
 
-async function fetchSteam(url, params = {}, retries = CONFIG.MAX_RETRIES) {
+async function fetchSteam(url, params = {}, retries = 3) {
   const agora = Date.now();
   const espera = Math.max(0, MIN_INTERVALO - (agora - ultimaRequisicao));
   if (espera > 0) await new Promise(r => setTimeout(r, espera));
@@ -113,24 +105,18 @@ async function fetchSteam(url, params = {}, retries = CONFIG.MAX_RETRIES) {
   for (let i = 0; i < retries; i++) {
     try {
       const resp = await axios.get(url, {
-        params: { ...params, key: CONFIG.STEAM_KEY },
-        timeout: CONFIG.REQUEST_TIMEOUT,
+        params: { ...params, key: STEAM_KEY },
+        timeout: 10000,
         headers: { 'User-Agent': 'SteamFamilyBot/2.0' }
       });
       if (resp.status === 429) {
-        const wait = 2000 * (i + 1);
-        console.log(`⏳ Rate limit, esperando ${wait}ms...`);
-        await new Promise(r => setTimeout(r, wait));
+        await new Promise(r => setTimeout(r, 2000 * (i + 1)));
         continue;
       }
       return resp.data;
-    } catch (err) {
-      if (i < retries - 1) {
-        console.warn(`⚠️ Tentativa ${i+1} falhou, retentando...`);
-        await new Promise(r => setTimeout(r, 2000 * (i+1)));
-      } else {
-        throw err;
-      }
+    } catch (e) {
+      if (i === retries - 1) throw e;
+      await new Promise(r => setTimeout(r, 2000 * (i + 1)));
     }
   }
 }
@@ -168,7 +154,7 @@ async function getGameDetails(appId) {
     if (resp.data && resp.data[appId]?.success) {
       return resp.data[appId].data;
     }
-  } catch (_) { /* ignora */ }
+  } catch (_) {}
   return null;
 }
 
@@ -196,18 +182,17 @@ function extrairAppIdDaUrl(url) {
 }
 
 // ============================================================
-// FUNÇÕES DE NEGÓCIO
+// 5. FUNÇÕES DE NEGÓCIO (lista /quero)
 // ============================================================
 function adicionarQuero(discordId, appid, nome, link) {
   if (!db.listaQuero[discordId]) db.listaQuero[discordId] = [];
   if (db.listaQuero[discordId].some(j => j.appid === appid)) {
     return { sucesso: false, motivo: 'ja_na_lista' };
   }
-  // Verifica se já está na família (usando o histórico)
-  const historico = db.historicoJogos || {};
-  for (const sid of CONFIG.STEAM_IDS) {
-    if ((historico[sid] || []).includes(appid)) {
-      const dono = STEAM_NAMES[sid] || sid;
+  // Verifica se já está na família (usando histórico)
+  for (const sid of STEAM_IDS_ARRAY) {
+    if ((db.historicoJogos[sid] || []).includes(appid)) {
+      const dono = MEMBROS[sid]?.nome || sid;
       return { sucesso: false, motivo: 'ja_na_familia', dono };
     }
   }
@@ -235,14 +220,8 @@ function listarQuero(discordId) {
 }
 
 // ============================================================
-// CLIENT DISCORD
+// 6. CLIENT DISCORD
 // ============================================================
-if (!CONFIG.DISCORD_TOKEN || CONFIG.DISCORD_TOKEN === 'seu_token_aqui') {
-  console.error('❌ Token do Discord não definido ou inválido!');
-  console.error('   Verifique o .env ou as variáveis do Railway.');
-  process.exit(1);
-}
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -256,7 +235,7 @@ let previousGames = {};
 let ultimaMensagemRankingId = db.ultimaMensagemRankingId || null;
 
 // ============================================================
-// RANKING
+// 7. RANKING
 // ============================================================
 function gerarRankingEmbed() {
   const rankingArray = Object.values(db.ranking).sort((a, b) => b.jogos - a.jogos);
@@ -278,14 +257,14 @@ function gerarRankingEmbed() {
 }
 
 async function enviarRanking() {
-  const channel = client.channels.cache.get(CONFIG.CHANNEL_RANKING);
+  const channel = client.channels.cache.get(RANKING_CHANNEL_ID);
   if (!channel) return;
   try {
     if (ultimaMensagemRankingId) {
       try {
         const antiga = await channel.messages.fetch(ultimaMensagemRankingId);
         if (antiga) await antiga.delete();
-      } catch (_) { /* ignora */ }
+      } catch (_) {}
     }
     const embed = gerarRankingEmbed();
     const nova = await channel.send({ embeds: [embed] });
@@ -298,11 +277,11 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// VERIFICAÇÃO DE CONQUISTAS
+// 8. VERIFICAÇÃO DE CONQUISTAS (apenas novas)
 // ============================================================
 async function verificarConquistas(steamId, games, mention, userName) {
   if (!games?.length) return;
-  const channel = client.channels.cache.get(CONFIG.CHANNEL_CONQUISTAS);
+  const channel = client.channels.cache.get(ACHIEVEMENT_CHANNEL_ID);
   if (!channel) return;
 
   if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
@@ -315,21 +294,14 @@ async function verificarConquistas(steamId, games, mention, userName) {
   for (const game of recentes) {
     const appid = game.appid;
     const gameName = game.name || `Jogo ${appid}`;
-    if (db.jogosSemConquistas[appid]) continue;
 
     let conquistas;
     try {
       conquistas = await getPlayerAchievements(steamId, appid);
     } catch (_) {
-      db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString() };
-      salvarDB(db);
       continue;
     }
-    if (!conquistas || conquistas.length === 0) {
-      db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString() };
-      salvarDB(db);
-      continue;
-    }
+    if (!conquistas || conquistas.length === 0) continue;
 
     const desbloqueadas = conquistas.filter(c => c.achieved === 1);
     const total = desbloqueadas.length;
@@ -381,108 +353,103 @@ async function verificarConquistas(steamId, games, mention, userName) {
 }
 
 // ============================================================
-// VERIFICAÇÃO DE NOVOS JOGOS
+// 9. VERIFICAÇÃO DE NOVOS JOGOS
 // ============================================================
 async function checkSteamGames() {
   const inicio = Date.now();
-  console.log(`🔄 [${new Date().toLocaleTimeString()}] VERIFICANDO...`);
+  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando...`);
 
-  try {
-    const channelNotificacoes = client.channels.cache.get(CONFIG.CHANNEL_NOTIFICACOES);
-    if (!channelNotificacoes) {
-      console.error('❌ Canal de notificações não encontrado!');
-      return;
-    }
+  const channelNotificacoes = client.channels.cache.get(CHANNEL_ID);
+  if (!channelNotificacoes) {
+    console.error('❌ Canal de notificações não encontrado!');
+    return;
+  }
 
-    for (const steamId of CONFIG.STEAM_IDS) {
-      try {
-        const games = await getOwnedGames(steamId);
-        if (!games.length) continue;
+  for (const steamId of STEAM_IDS_ARRAY) {
+    try {
+      const games = await getOwnedGames(steamId);
+      if (!games.length) continue;
 
-        const currentGames = games.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
-        const userName = STEAM_NAMES[steamId] || steamId;
-        const discordId = DISCORD_USERS[steamId];
-        const mention = discordId ? `<@${discordId}>` : userName;
+      const currentGames = games.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
+      const member = MEMBROS[steamId];
+      if (!member) {
+        console.warn(`⚠️ Steam ID ${steamId} não mapeado`);
+        continue;
+      }
+      const userName = member.nome;
+      const discordId = member.discordId;
+      const mention = `<@${discordId}>`;
 
-        await verificarConquistas(steamId, currentGames, mention, userName);
+      await verificarConquistas(steamId, currentGames, mention, userName);
 
-        if (!previousGames[steamId]) {
-          previousGames[steamId] = currentGames;
-          console.log(`📊 ${userName}: ${currentGames.length} jogos`);
-          continue;
-        }
+      if (!previousGames[steamId]) {
+        previousGames[steamId] = currentGames;
+        console.log(`📊 ${userName}: ${currentGames.length} jogos`);
+        continue;
+      }
 
-        const oldNames = previousGames[steamId].map(g => g.appid);
-        const newGames = currentGames.filter(g => !oldNames.includes(g.appid));
+      const oldIds = previousGames[steamId].map(g => g.appid);
+      const newGames = currentGames.filter(g => !oldIds.includes(g.appid));
 
-        if (newGames.length) {
-          console.log(`🎮 ${userName} +${newGames.length} novo(s) jogo(s)!`);
+      if (newGames.length) {
+        console.log(`🎮 ${userName} +${newGames.length} novo(s) jogo(s)!`);
 
-          for (const game of newGames) {
-            const appid = game.appid;
-            const nome = game.name || `App ${appid}`;
-            const link = `https://store.steampowered.com/app/${appid}`;
+        for (const game of newGames) {
+          const appid = game.appid;
+          const nome = game.name || `App ${appid}`;
+          const link = `https://store.steampowered.com/app/${appid}`;
 
-            // Notifica no canal
-            const embed = new EmbedBuilder()
-              .setColor(0x00FF00)
-              .setTitle(`🛒 NOVO JOGO NA FAMÍLIA!`)
-              .setDescription(`**${userName}** agora tem acesso a **${nome}**!`)
-              .addFields(
-                { name: '🔗 Link', value: `[Ver na Steam](${link})`, inline: false }
-              )
-              .setTimestamp();
-            const detalhes = await getGameDetails(appid);
-            if (detalhes?.header_image) embed.setImage(detalhes.header_image);
-            await channelNotificacoes.send({ content: mention, embeds: [embed] });
+          const embed = new EmbedBuilder()
+            .setColor(0x00FF00)
+            .setTitle(`🛒 NOVO JOGO NA FAMÍLIA!`)
+            .setDescription(`**${userName}** agora tem acesso a **${nome}**!`)
+            .addFields({ name: '🔗 Link', value: `[Ver na Steam](${link})`, inline: false })
+            .setTimestamp();
+          const detalhes = await getGameDetails(appid);
+          if (detalhes?.header_image) embed.setImage(detalhes.header_image);
+          await channelNotificacoes.send({ content: mention, embeds: [embed] });
 
-            // Atualiza ranking
-            if (db.ranking[steamId]) {
-              db.ranking[steamId].jogos += 1;
-              salvarDB(db);
-              await enviarRanking();
-            }
+          // Atualiza ranking
+          if (db.ranking[steamId]) {
+            db.ranking[steamId].jogos += 1;
+            salvarDB(db);
+            await enviarRanking();
+          }
 
-            // Remove da lista /quero de quem tinha (incluindo o comprador)
-            for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero)) {
-              for (const j of jogos) {
-                if (j.appid === appid) {
-                  removerQuero(discordIdQuero, appid);
-                  try {
-                    const user = await client.users.fetch(discordIdQuero);
-                    await user.send(`🎮 **${nome}** foi removido da sua lista /quero!\n✅ **${userName}** adquiriu este jogo na Steam.`);
-                  } catch (_) { /* ignora */ }
-                }
+          // Remove da lista /quero de quem tinha
+          for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero)) {
+            for (const j of jogos) {
+              if (j.appid === appid) {
+                removerQuero(discordIdQuero, appid);
+                try {
+                  const user = await client.users.fetch(discordIdQuero);
+                  await user.send(`🎮 **${nome}** foi removido da sua lista /quero!\n✅ **${userName}** adquiriu este jogo.`);
+                } catch (_) {}
               }
             }
           }
         }
-        previousGames[steamId] = currentGames;
-        // Atualiza histórico
-        db.historicoJogos[steamId] = currentGames.map(g => g.appid);
-        salvarDB(db);
-
-      } catch (err) {
-        console.error(`❌ Erro em ${steamId}:`, err.message);
       }
+      previousGames[steamId] = currentGames;
+      db.historicoJogos[steamId] = currentGames.map(g => g.appid);
+      salvarDB(db);
+
+    } catch (err) {
+      console.error(`❌ Erro em ${steamId}:`, err.message);
     }
-
-    if (!primeiraVerificacaoConcluida) {
-      primeiraVerificacaoConcluida = true;
-      console.log('✅ PRIMEIRA VERIFICAÇÃO CONCLUÍDA!');
-      console.log('🔍 Monitorando NOVOS jogos e conquistas em tempo real!');
-    }
-
-    const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
-    console.log(`✅ Verificação concluída em ${duracao}s`);
-
-  } catch (err) {
-    console.error('❌ Erro geral:', err);
   }
+
+  if (!primeiraVerificacaoConcluida) {
+    primeiraVerificacaoConcluida = true;
+    console.log('✅ PRIMEIRA VERIFICAÇÃO CONCLUÍDA! Monitorando novas conquistas e jogos.');
+  }
+
+  const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
+  console.log(`✅ Verificação concluída em ${duracao}s`);
 }
 
 // ============================================================
-// REGISTRO DE COMANDOS SLASH
+// 10. REGISTRO DE COMANDOS SLASH
 // ============================================================
 async function registrarComandos() {
   try {
@@ -522,7 +489,7 @@ async function registrarComandos() {
       { name: 'dbstatus', description: '[DONO] Mostra o status do banco de dados' }
     ];
 
-    const rest = new REST({ version: '10' }).setToken(CONFIG.DISCORD_TOKEN);
+    const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
     console.log('✅ Comandos globais registrados');
   } catch (err) {
@@ -531,39 +498,38 @@ async function registrarComandos() {
 }
 
 // ============================================================
-// EVENTOS
+// 11. EVENTOS
 // ============================================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   await registrarComandos();
   await enviarRanking();
 
-  // Inicializa histórico
-  if (!db.historicoJogos || Object.keys(db.historicoJogos).length === 0) {
+  // Inicializa histórico se vazio
+  if (Object.keys(db.historicoJogos).length === 0) {
     console.log('🔄 Inicializando histórico de jogos...');
-    for (const steamId of CONFIG.STEAM_IDS) {
+    for (const steamId of STEAM_IDS_ARRAY) {
       try {
         const games = await getOwnedGames(steamId);
         db.historicoJogos[steamId] = games.map(g => g.appid);
-        console.log(`   ${STEAM_NAMES[steamId] || steamId}: ${games.length} jogos`);
-      } catch (_) { /* ignora */ }
+        console.log(`   ${MEMBROS[steamId]?.nome || steamId}: ${games.length} jogos`);
+      } catch (_) {}
     }
     salvarDB(db);
   }
 
-  // Inicia a primeira verificação e o loop
   await checkSteamGames();
-  setInterval(checkSteamGames, CONFIG.INTERVALO_VERIFICACAO);
-  console.log(`🔄 Monitorando a cada ${CONFIG.INTERVALO_VERIFICACAO/1000}s`);
+  setInterval(checkSteamGames, 15000);
+  console.log(`🔄 Monitorando a cada 15 segundos`);
 
   try {
-    const dono = await client.users.fetch(CONFIG.DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online! Monitorando jogos e conquistas.');
-  } catch (_) { /* ignora */ }
+    const dono = await client.users.fetch(DONO_ID);
+    await dono.send('🚀 Bot Steam Família está online!');
+  } catch (_) {}
 });
 
 // ============================================================
-// COMANDOS SLASH
+// 12. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -587,12 +553,12 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply(`❌ Não encontrei **${input}** na Steam.`);
         return;
       }
-      // Verifica quem tem o jogo
+      // Verifica donos
       const donos = [];
-      for (const steamId of CONFIG.STEAM_IDS) {
-        const historico = db.historicoJogos || {};
-        if ((historico[steamId] || []).includes(info.appid)) {
-          donos.push({ nome: STEAM_NAMES[steamId] || steamId, discordId: DISCORD_USERS[steamId] });
+      for (const sid of STEAM_IDS_ARRAY) {
+        if ((db.historicoJogos[sid] || []).includes(info.appid)) {
+          const m = MEMBROS[sid];
+          if (m) donos.push({ nome: m.nome, discordId: m.discordId });
         }
       }
       const embed = new EmbedBuilder()
@@ -601,12 +567,9 @@ client.on('interactionCreate', async (interaction) => {
         .setURL(info.link)
         .setFooter({ text: 'Steam Família' });
       if (info.capa) embed.setThumbnail(info.capa);
-      if (donos.length > 0) {
+      if (donos.length) {
         let desc = `🎮 **${donos.length} membro(s) possui(em):**\n`;
-        donos.forEach((d, i) => {
-          const mention = d.discordId ? `<@${d.discordId}>` : d.nome;
-          desc += `**${i+1}.** ${mention}\n`;
-        });
+        donos.forEach((d, i) => desc += `**${i+1}.** <@${d.discordId}>\n`);
         embed.setDescription(desc);
       } else {
         embed.setDescription('😕 **Nenhum membro da família possui este jogo.**');
@@ -620,8 +583,7 @@ client.on('interactionCreate', async (interaction) => {
   // /ranking
   if (interaction.commandName === 'ranking') {
     await interaction.deferReply({ ephemeral: true });
-    const embed = gerarRankingEmbed();
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [gerarRankingEmbed()] });
   }
 
   // /quero
@@ -634,28 +596,25 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply(`❌ Não encontrei **${nome}** na Steam.`);
         return;
       }
-      // Verifica se o usuário já tem o jogo (usando o histórico)
+      // Verifica se o usuário já tem o jogo
       let userSteamId = null;
-      for (const [sid, did] of Object.entries(DISCORD_USERS)) {
-        if (did === interaction.user.id) { userSteamId = sid; break; }
+      for (const [sid, m] of Object.entries(MEMBROS)) {
+        if (m.discordId === interaction.user.id) { userSteamId = sid; break; }
       }
-      if (userSteamId) {
-        const historico = db.historicoJogos || {};
-        if ((historico[userSteamId] || []).includes(info.appid)) {
-          await interaction.editReply(`ℹ️ Você **já possui** **${info.nome}** na sua biblioteca!`);
-          return;
-        }
+      if (userSteamId && (db.historicoJogos[userSteamId] || []).includes(info.appid)) {
+        await interaction.editReply(`ℹ️ Você **já possui** **${info.nome}**.`);
+        return;
       }
       const resultado = adicionarQuero(interaction.user.id, info.appid, info.nome, info.link);
       if (!resultado.sucesso) {
         if (resultado.motivo === 'ja_na_lista') {
-          await interaction.editReply(`ℹ️ O jogo **${info.nome}** já está na sua lista /quero.`);
+          await interaction.editReply(`ℹ️ **${info.nome}** já está na sua lista /quero.`);
         } else if (resultado.motivo === 'ja_na_familia') {
-          await interaction.editReply(`ℹ️ O jogo **${info.nome}** **já está na família!**\n👤 ${resultado.dono} já possui este jogo.`);
+          await interaction.editReply(`ℹ️ **${info.nome}** já está na família! 👤 ${resultado.dono}`);
         }
         return;
       }
-      await interaction.editReply(`✅ **${info.nome}** adicionado à sua lista /quero!\n🔗 ${info.link}\n📢 Você será notificado quando estiver disponível ou alguém comprar.`);
+      await interaction.editReply(`✅ **${info.nome}** adicionado à sua lista /quero!\n🔗 ${info.link}`);
     } catch (err) {
       await interaction.editReply(`❌ Erro: ${err.message}`);
     }
@@ -691,7 +650,7 @@ client.on('interactionCreate', async (interaction) => {
       if (removido) {
         await interaction.editReply(`✅ **${info.nome}** removido da sua lista /quero.`);
       } else {
-        await interaction.editReply(`ℹ️ **${info.nome}** não estava na sua lista /quero.`);
+        await interaction.editReply(`ℹ️ **${info.nome}** não estava na sua lista.`);
       }
     } catch (err) {
       await interaction.editReply(`❌ Erro: ${err.message}`);
@@ -700,8 +659,8 @@ client.on('interactionCreate', async (interaction) => {
 
   // /dbstatus (apenas dono)
   if (interaction.commandName === 'dbstatus') {
-    if (interaction.user.id !== CONFIG.DONO_ID) {
-      await interaction.reply({ content: '❌ Apenas o dono pode usar este comando.', ephemeral: true });
+    if (interaction.user.id !== DONO_ID) {
+      await interaction.reply({ content: '❌ Apenas o dono.', ephemeral: true });
       return;
     }
     await interaction.deferReply({ ephemeral: true });
@@ -713,45 +672,45 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// COMANDO !resetranking (apenas dono)
+// 13. COMANDO !resetranking (apenas dono)
 // ============================================================
 client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (message.content.toLowerCase() === '!resetranking' && message.author.id === CONFIG.DONO_ID) {
-    await message.reply('⚠️ Tem certeza? Digite `!confirmar` em 30 segundos.');
-    const collector = message.channel.createMessageCollector({
-      filter: m => m.author.id === CONFIG.DONO_ID && m.content.toLowerCase() === '!confirmar',
-      max: 1,
-      time: 30000
-    });
-    collector.on('collect', async () => {
-      for (const sid of CONFIG.STEAM_IDS) {
-        if (db.ranking[sid]) db.ranking[sid].jogos = 0;
-      }
-      salvarDB(db);
-      await enviarRanking();
-      await message.reply('✅ Ranking resetado para 0.');
-    });
-    collector.on('end', collected => {
-      if (collected.size === 0) message.reply('⏰ Cancelado.');
-    });
-  }
+  if (message.author.bot || message.author.id !== DONO_ID) return;
+  if (message.content.toLowerCase() !== '!resetranking') return;
+
+  await message.reply('⚠️ Tem certeza? Digite `!confirmar` em 30 segundos.');
+  const collector = message.channel.createMessageCollector({
+    filter: m => m.author.id === DONO_ID && m.content.toLowerCase() === '!confirmar',
+    max: 1,
+    time: 30000
+  });
+  collector.on('collect', async () => {
+    for (const sid of STEAM_IDS_ARRAY) {
+      if (db.ranking[sid]) db.ranking[sid].jogos = 0;
+    }
+    salvarDB(db);
+    await enviarRanking();
+    await message.reply('✅ Ranking resetado.');
+  });
+  collector.on('end', collected => {
+    if (collected.size === 0) message.reply('⏰ Cancelado.');
+  });
 });
 
 // ============================================================
-// HEALTH CHECK
+// 14. HEALTH CHECK
 // ============================================================
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
 });
-server.listen(CONFIG.PORT, () => console.log(`✅ Health check na porta ${CONFIG.PORT}`));
+server.listen(PORT, () => console.log(`✅ Health check na porta ${PORT}`));
 
 // ============================================================
-// LOGIN
+// 15. LOGIN
 // ============================================================
-client.login(CONFIG.DISCORD_TOKEN)
-  .then(() => console.log('✅ Login realizado com sucesso!'))
+client.login(DISCORD_TOKEN)
+  .then(() => console.log('✅ Login bem-sucedido!'))
   .catch(err => {
     console.error('❌ Erro ao fazer login:', err.message);
     process.exit(1);
