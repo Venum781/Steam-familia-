@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM CORREÇÕES
+// BOT STEAM FAMÍLIA - VERSÃO FINAL CORRIGIDA
 // ============================================================
 
 require('dotenv').config();
@@ -225,7 +225,6 @@ async function getPriceOverview(appId) {
   return null;
 }
 
-// Cache para nomes de conquistas
 const achievementNameCache = {};
 
 async function getAchievementDisplayName(appId, apiname) {
@@ -508,7 +507,7 @@ async function verificarLancamentosQuero() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE PROMOÇÕES
+// 10. VERIFICAÇÃO DE PROMOÇÕES COM DETECÇÃO DE MUDANÇA DE ESTADO
 // ============================================================
 async function verificarPromocoesQuero() {
   console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções...`);
@@ -603,9 +602,14 @@ async function checkSteamGames() {
 
       await verificarConquistas(steamId, currentGames, mention, userName);
 
+      // 🔥 CRUCIAL: Inicializar previousGames se for a primeira execução
       if (!previousGames[steamId]) {
+        // Se não há histórico salvo, usa a lista atual (sem notificar)
         previousGames[steamId] = currentGames;
-        console.log(`📊 ${userName}: ${currentGames.length} jogos`);
+        console.log(`📊 ${userName}: ${currentGames.length} jogos (histórico inicial salvo)`);
+        // Atualiza o histórico no banco também
+        db.historicoJogos[steamId] = currentGames.map(g => g.appid);
+        salvarDB(db);
         continue;
       }
 
@@ -630,11 +634,10 @@ async function checkSteamGames() {
           if (detalhes?.header_image) embed.setImage(detalhes.header_image);
           await channelNotificacoes.send({ content: mention, embeds: [embed] });
 
-          // Atualiza ranking e envia mensagem no canal de ranking
           if (db.ranking[steamId]) {
             db.ranking[steamId].jogos += 1;
             salvarDB(db);
-            await enviarRanking(); // só envia quando há mudança real
+            await enviarRanking(); // ✅ Atualiza ranking no canal
           }
 
           // Remove da lista /quero de quem tinha
@@ -686,7 +689,10 @@ async function registrarComandos() {
           required: true
         }]
       },
-      { name: 'ranking', description: 'Mostra o ranking da biblioteca da família' },
+      {
+        name: 'ranking',
+        description: 'Mostra o ranking da biblioteca da família (apenas para você)'
+      },
       {
         name: 'quero',
         description: 'Adiciona um jogo à sua lista de desejos personalizada (nome ou link)',
@@ -726,20 +732,46 @@ client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
-  // ⚠️ NÃO ENVIA RANKING AUTOMATICAMENTE NA INICIALIZAÇÃO
 
-  if (!db.historicoJogos || Object.keys(db.historicoJogos).length === 0) {
-    console.log('🔄 Inicializando histórico de jogos...');
+  // 🔥 NÃO ENVIA RANKING AUTOMATICAMENTE NA INICIALIZAÇÃO
+
+  // Carrega o histórico de jogos do banco, se existir
+  if (db.historicoJogos && Object.keys(db.historicoJogos).length > 0) {
+    console.log('📚 Histórico de jogos carregado do banco de dados.');
+    // Restaura previousGames a partir do banco
+    for (const steamId of STEAM_IDS_ARRAY) {
+      if (db.historicoJogos[steamId]) {
+        const games = await getOwnedGames(steamId);
+        // Filtra apenas os jogos que estão no histórico (para manter o estado)
+        const historicoIds = db.historicoJogos[steamId];
+        previousGames[steamId] = games
+          .filter(g => historicoIds.includes(g.appid))
+          .map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
+        // Se o histórico estiver incompleto, adiciona os faltantes
+        const currentIds = games.map(g => g.appid);
+        const missingIds = historicoIds.filter(id => !currentIds.includes(id));
+        if (missingIds.length > 0) {
+          // Atualiza o histórico com os IDs atuais (jogos que sumiram)
+          db.historicoJogos[steamId] = currentIds;
+          salvarDB(db);
+        }
+        console.log(`   ${MEMBROS[steamId]?.nome || steamId}: ${previousGames[steamId].length} jogos no histórico`);
+      }
+    }
+  } else {
+    console.log('🔄 Nenhum histórico encontrado. Criando histórico inicial (sem notificações)...');
     for (const steamId of STEAM_IDS_ARRAY) {
       try {
         const games = await getOwnedGames(steamId);
         db.historicoJogos[steamId] = games.map(g => g.appid);
-        console.log(`   ${MEMBROS[steamId]?.nome || steamId}: ${games.length} jogos`);
+        previousGames[steamId] = games.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
+        console.log(`   ${MEMBROS[steamId]?.nome || steamId}: ${games.length} jogos (inicializado)`);
       } catch (_) {}
     }
     salvarDB(db);
   }
 
+  // Agora inicia as verificações
   await checkSteamGames();
   setInterval(checkSteamGames, 15000);
   console.log(`🔄 Monitorando jogos a cada 15 segundos`);
@@ -754,7 +786,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online! Ranking apenas sob comando ou mudanças.');
+    await dono.send('🚀 Bot Steam Família está online! Ranking só é enviado em mudanças reais.');
   } catch (_) {}
 });
 
@@ -809,15 +841,11 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /ranking (AGORA EFÊMERO)
+  // /ranking (EFÊMERO – só quem usou vê)
   if (interaction.commandName === 'ranking') {
     await interaction.deferReply({ ephemeral: true });
-    try {
-      const embed = gerarRankingEmbed();
-      await interaction.editReply({ embeds: [embed] });
-    } catch (err) {
-      await interaction.editReply(`❌ Erro: ${err.message}`);
-    }
+    const embed = gerarRankingEmbed();
+    await interaction.editReply({ embeds: [embed] });
   }
 
   // /quero
@@ -968,7 +996,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /dbstatus (apenas dono)
+  // /dbstatus
   if (interaction.commandName === 'dbstatus') {
     if (interaction.user.id !== DONO_ID) {
       await interaction.reply({ content: '❌ Apenas o dono.', ephemeral: true });
@@ -983,7 +1011,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 15. !resetranking (apenas dono)
+// 15. !resetranking
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.author.id !== DONO_ID) return;
@@ -1000,7 +1028,7 @@ client.on('messageCreate', async (message) => {
       if (db.ranking[sid]) db.ranking[sid].jogos = 0;
     }
     salvarDB(db);
-    await enviarRanking(); // atualiza o ranking no canal (apenas uma mensagem)
+    await enviarRanking();
     await message.reply('✅ Ranking resetado.');
   });
   collector.on('end', collected => {
