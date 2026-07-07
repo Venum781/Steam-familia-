@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM BANCO DE DADOS COMPLETO DE CONQUISTAS
+// BOT STEAM FAMÍLIA - COM CACHE DE JOGOS SEM CONQUISTAS
 // ============================================================
 
 require('dotenv').config();
@@ -68,6 +68,7 @@ function carregarDB() {
       if (!parsed.historicoJogos) parsed.historicoJogos = {};
       if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
       if (!parsed.lancamentosNotificados) parsed.lancamentosNotificados = {};
+      if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {}; // 🔥 NOVO
       return parsed;
     } else {
       console.log(`ℹ️ DB não encontrado em ${DB_FILE}, criando novo...`);
@@ -84,7 +85,8 @@ function carregarDB() {
     listaQuero: {},
     historicoJogos: {},
     ultimaMensagemRankingId: null,
-    lancamentosNotificados: {}
+    lancamentosNotificados: {},
+    jogosSemConquistas: {} // 🔥 NOVO
   };
 }
 
@@ -449,7 +451,6 @@ async function inicializarConquistas(steamId, userName) {
   
   try {
     const allGames = await getOwnedGames(steamId);
-    // Filtra apenas jogos que já foram jogados (rtime_last_played > 0)
     const playedGames = allGames.filter(g => g.rtime_last_played && g.rtime_last_played > 0);
     
     console.log(`   ${userName}: ${playedGames.length} jogos já jogados encontrados.`);
@@ -461,13 +462,36 @@ async function inicializarConquistas(steamId, userName) {
       const appid = game.appid;
       const gameName = game.name || `Jogo ${appid}`;
 
+      // 🔥 Verifica se já foi marcado como sem conquistas
+      if (db.jogosSemConquistas && db.jogosSemConquistas[appid]) {
+        continue;
+      }
+
       let conquistas;
       try {
         conquistas = await getPlayerAchievements(steamId, appid);
-      } catch (_) {
+      } catch (e) {
+        // Se der erro (ex: 400), marca como sem conquistas
+        if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+        db.jogosSemConquistas[appid] = {
+          nome: gameName,
+          data: new Date().toISOString(),
+          motivo: 'erro_na_api'
+        };
+        salvarDB(db);
         continue;
       }
-      if (!conquistas || conquistas.length === 0) continue;
+      if (!conquistas || conquistas.length === 0) {
+        // Jogo sem conquistas
+        if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+        db.jogosSemConquistas[appid] = {
+          nome: gameName,
+          data: new Date().toISOString(),
+          motivo: 'sem_conquistas'
+        };
+        salvarDB(db);
+        continue;
+      }
 
       const desbloqueadas = conquistas.filter(c => c.achieved === 1);
       const total = desbloqueadas.length;
@@ -506,28 +530,52 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
     return;
   }
 
-  console.log(`🏆 ${userName}: verificando ${recentGames.length} jogos recentes para novas conquistas...`);
+  // 🔥 Filtra apenas jogos que não estão na lista de "sem conquistas"
+  const jogosParaVerificar = recentGames.filter(g => !db.jogosSemConquistas || !db.jogosSemConquistas[g.appid]);
+
+  if (jogosParaVerificar.length === 0) {
+    return;
+  }
+
+  console.log(`🏆 ${userName}: verificando ${jogosParaVerificar.length} jogos recentes para novas conquistas...`);
 
   let novasConquistas = 0;
 
-  for (const game of recentGames) {
+  for (const game of jogosParaVerificar) {
     const appid = game.appid;
     const gameName = game.name || `Jogo ${appid}`;
 
     let conquistas;
     try {
       conquistas = await getPlayerAchievements(steamId, appid);
-    } catch (_) {
-      console.log(`   ⚠️ ${gameName}: erro ao buscar conquistas, pulando.`);
+    } catch (e) {
+      // Se der erro, marca como sem conquistas e pula
+      if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+      db.jogosSemConquistas[appid] = {
+        nome: gameName,
+        data: new Date().toISOString(),
+        motivo: 'erro_na_api'
+      };
+      salvarDB(db);
       continue;
     }
-    if (!conquistas || conquistas.length === 0) continue;
+    if (!conquistas || conquistas.length === 0) {
+      // Jogo sem conquistas – marca e pula
+      if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+      db.jogosSemConquistas[appid] = {
+        nome: gameName,
+        data: new Date().toISOString(),
+        motivo: 'sem_conquistas'
+      };
+      salvarDB(db);
+      continue;
+    }
 
     const desbloqueadas = conquistas.filter(c => c.achieved === 1);
     const total = desbloqueadas.length;
     const totalJogo = conquistas.length;
 
-    // Se o jogo não está no banco, inicializa (caso tenha sido jogado pela primeira vez)
+    // Se o jogo não está no banco, inicializa (primeira vez que vê)
     if (!db.conquistas[steamId][appid]) {
       db.conquistas[steamId][appid] = {
         total,
@@ -738,10 +786,8 @@ async function checkSteamGames() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      // 🔥 Verifica conquistas nos jogos recentes
       await verificarConquistas(steamId, recentGames, mention, userName);
 
-      // Monitoramento de novos jogos
       if (!previousGames[steamId]) {
         previousGames[steamId] = allGames.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
         console.log(`📊 ${userName}: ${allGames.length} jogos (histórico inicial salvo)`);
@@ -882,7 +928,7 @@ client.once('ready', async () => {
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
 
-  // 🔥 INICIALIZA O BANCO DE CONQUISTAS (apenas na primeira execução)
+  // Inicializa banco de conquistas se vazio
   if (Object.keys(db.conquistas).length === 0) {
     console.log('🏆 Inicializando banco de conquistas para todos os membros...');
     for (const steamId of STEAM_IDS_ARRAY) {
@@ -942,12 +988,12 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: banco de dados completo de conquistas!');
+    await dono.send('🚀 Bot atualizado: cache de jogos sem conquistas ativado!');
   } catch (_) {}
 });
 
 // ============================================================
-// 15. COMANDOS SLASH
+// 15. COMANDOS SLASH (MANTIDOS IGUAIS)
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
