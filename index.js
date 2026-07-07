@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM VERIFICAÇÃO DE COMPATIBILIDADE
+// BOT STEAM FAMÍLIA - COM @everyone E COMPATIBILIDADE
 // ============================================================
 
 require('dotenv').config();
@@ -251,110 +251,38 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
+// 🔥 FUNÇÃO PARA VERIFICAR COMPATIBILIDADE COM FAMILY SHARING
+async function verificarCompatibilidadeFamilia(appId) {
+  try {
+    const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&l=portuguese`;
+    const resp = await axios.get(url, { timeout: 10000 });
+    if (resp.data && resp.data[appId]?.success) {
+      const game = resp.data[appId].data;
+      
+      if (game.is_free) {
+        return { compatível: false, motivo: 'Jogo gratuito não requer Family Sharing' };
+      }
+      
+      if (game.exclude_from_family_sharing === true) {
+        return { compatível: false, motivo: 'Este jogo NÃO é compatível com Family Sharing' };
+      }
+      
+      if (!game.price_overview) {
+        return { compatível: false, motivo: 'Jogo sem preço definido' };
+      }
+
+      return { compatível: true, motivo: null };
+    }
+  } catch (e) {
+    console.error(`❌ Erro ao verificar compatibilidade do jogo ${appId}:`, e.message);
+  }
+  
+  return { compatível: true, motivo: null };
+}
+
 function extrairAppIdDaUrl(url) {
   const match = url.match(/store\.steampowered\.com\/app\/(\d+)/);
   return match ? parseInt(match[1]) : null;
-}
-
-// ============================================================
-// 4.1. VERIFICAÇÃO DE COMPATIBILIDADE COM FAMILY SHARING
-// ============================================================
-// Lista de jogos conhecidos como incompatíveis (mantida manualmente)
-const JOGOS_INCOMPATIVEIS = {
-  33930: "Arma 2: Operation Arrowhead",
-  107410: "Arma 3",
-  582660: "Black Desert",
-  1097150: "Fall Guys",
-  220240: "Far Cry 3",
-  298110: "Far Cry 4",
-  552520: "Far Cry 5",
-  304390: "FOR HONOR",
-  1546970: "Grand Theft Auto III – The Definitive Edition",
-  12210: "Grand Theft Auto IV: The Complete Edition",
-  3240220: "Grand Theft Auto V Enhanced",
-  271590: "Grand Theft Auto V Legacy",
-  1547000: "Grand Theft Auto: San Andreas – The Definitive Edition",
-  1546990: "Grand Theft Auto: Vice City – The Definitive Edition",
-  439700: "H1Z1: King of the Kill Test Server",
-  269210: "Hero Siege",
-  1426210: "It Takes Two",
-  510190: "Lazarus",
-  1392860: "Little Nightmares III",
-  1328670: "Mass Effect Legendary Edition",
-  204100: "Max Payne 3",
-  555160: "Pavlov VR",
-  2129530: "REANIMAL",
-  1174180: "Red Dead Redemption 2",
-  2215260: "Scott Pilgrim vs. The World: The Game – Complete Edition",
-  488790: "South Park: The Fractured But Whole",
-  2001120: "Split Fiction",
-  1172380: "STAR WARS Jedi: Fallen Order",
-  1774580: "STAR WARS Jedi: Survivor",
-  1527280: "Starship Tunnel",
-  470220: "UNO",
-  447040: "Watch Dogs 2",
-  1222700: "A Way Out"
-};
-
-// Cache para compatibilidade (evita chamadas repetidas)
-const compatibilidadeCache = {};
-
-async function verificarCompatibilidadeFamilia(appid) {
-  // Verifica cache
-  if (compatibilidadeCache[appid] !== undefined) {
-    return compatibilidadeCache[appid];
-  }
-
-  // 1. Verifica lista manual
-  if (JOGOS_INCOMPATIVEIS[appid]) {
-    console.log(`📋 Lista manual: Jogo ${appid} NÃO é compatível (${JOGOS_INCOMPATIVEIS[appid]})`);
-    compatibilidadeCache[appid] = false;
-    return false;
-  }
-
-  // 2. Tenta consultar SteamDB (API pública)
-  try {
-    const url = `https://steamdb.info/api/v1/appdetails/?appid=${appid}`;
-    const resp = await axios.get(url, { timeout: 8000 });
-    if (resp.data && resp.data.data) {
-      const appData = resp.data.data;
-      // Campos que indicam incompatibilidade
-      const excludeFromFamilySharing = appData.exclude_from_family_sharing || false;
-      const isFree = appData.is_free || false;
-      const requiresAccount = appData.requires_account || false;
-
-      if (excludeFromFamilySharing || isFree || requiresAccount) {
-        console.log(`❌ SteamDB: Jogo ${appid} NÃO é compatível`);
-        compatibilidadeCache[appid] = false;
-        return false;
-      }
-    }
-  } catch (err) {
-    // Fallback: assume compatível se não conseguir verificar
-    console.log(`⚠️ SteamDB falhou para ${appid}, assumindo compatível.`);
-  }
-
-  // 3. Verifica na página da Steam (fallback)
-  try {
-    const url = `https://store.steampowered.com/app/${appid}`;
-    const resp = await axios.get(url, { timeout: 8000 });
-    const html = resp.data;
-    // Verifica se contém indicação de incompatibilidade
-    if (html.includes('Compartilhamento em família não disponível') ||
-        html.includes('Family Sharing not available') ||
-        html.includes('exclude_from_family_sharing')) {
-      console.log(`❌ Steam Store: Jogo ${appid} NÃO é compatível`);
-      compatibilidadeCache[appid] = false;
-      return false;
-    }
-  } catch (err) {
-    // Ignora erro na página da Steam
-  }
-
-  // Se passou por todas as verificações, é compatível
-  console.log(`✅ Jogo ${appid} é compatível com Família Steam`);
-  compatibilidadeCache[appid] = true;
-  return true;
 }
 
 // ============================================================
@@ -608,7 +536,7 @@ async function verificarLancamentosQuero() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE PROMOÇÕES
+// 10. VERIFICAÇÃO DE PROMOÇÕES COM DETECÇÃO DE MUDANÇA DE ESTADO
 // ============================================================
 async function verificarPromocoesQuero() {
   console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções...`);
@@ -674,7 +602,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS
+// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM @everyone E COMPATIBILIDADE)
 // ============================================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -722,33 +650,65 @@ async function checkSteamGames() {
           const nome = game.name || `App ${appid}`;
           const link = `https://store.steampowered.com/app/${appid}`;
 
-          const embed = new EmbedBuilder()
-            .setColor(0x00FF00)
-            .setTitle(`🛒 NOVO JOGO NA FAMÍLIA!`)
-            .setDescription(`**${userName}** agora tem acesso a **${nome}**!`)
-            .addFields({ name: '🔗 Link', value: `[Ver na Steam](${link})`, inline: false })
-            .setTimestamp();
-          const detalhes = await getGameDetails(appid);
-          if (detalhes?.header_image) embed.setImage(detalhes.header_image);
-          await channelNotificacoes.send({ content: mention, embeds: [embed] });
+          // 🔥 VERIFICA COMPATIBILIDADE
+          const compat = await verificarCompatibilidadeFamilia(appid);
 
-          if (db.ranking[steamId]) {
-            db.ranking[steamId].jogos += 1;
-            salvarDB(db);
-            await enviarRanking();
-          }
+          // 🔥 SÓ ANUNCIA SE FOR COMPATÍVEL
+          if (compat.compatível) {
+            const embed = new EmbedBuilder()
+              .setColor(0x00FF00)
+              .setTitle(`🛒 NOVO JOGO NA FAMÍLIA!`)
+              .setDescription(`**${userName}** agora tem acesso a **${nome}**!`)
+              .addFields(
+                { name: '🔗 Link', value: `[Ver na Steam](${link})`, inline: false },
+                { name: '✅ Compatibilidade', value: '✅ **Compatível com Família Steam!**', inline: false }
+              )
+              .setTimestamp();
+            const detalhes = await getGameDetails(appid);
+            if (detalhes?.header_image) embed.setImage(detalhes.header_image);
 
-          for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
-            if (!jogos) continue;
-            for (const j of jogos) {
-              if (j.appid === appid) {
-                removerQuero(discordIdQuero, appid);
-                try {
-                  const user = await client.users.fetch(discordIdQuero);
-                  await user.send(`🎮 **${nome}** foi removido da sua lista /quero!\n✅ **${userName}** adquiriu este jogo.`);
-                } catch (_) {}
+            // 🔥 ENVIA COM @everyone E MENÇÃO AO COMPRADOR
+            await channelNotificacoes.send({ 
+              content: `@everyone 🎉 **${userName}** comprou um novo jogo!`, 
+              embeds: [embed] 
+            });
+
+            if (db.ranking[steamId]) {
+              db.ranking[steamId].jogos += 1;
+              salvarDB(db);
+              await enviarRanking();
+            }
+
+            // Remove da lista /quero de quem tinha
+            for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
+              if (!jogos) continue;
+              for (const j of jogos) {
+                if (j.appid === appid) {
+                  removerQuero(discordIdQuero, appid);
+                  try {
+                    const user = await client.users.fetch(discordIdQuero);
+                    await user.send(`🎮 **${nome}** foi removido da sua lista /quero!\n✅ **${userName}** adquiriu este jogo.`);
+                  } catch (_) {}
+                }
               }
             }
+          } else {
+            // 🔥 JOGO INCOMPATÍVEL - NÃO ANUNCIA COM @everyone, apenas log
+            console.log(`⚠️ Jogo ${nome} (${appid}) é INCOMPATÍVEL com Family Sharing - não anunciado. Motivo: ${compat.motivo}`);
+            
+            // Opcional: Envia uma mensagem discreta sem @everyone (descomente se quiser)
+            /*
+            const embed = new EmbedBuilder()
+              .setColor(0xFF0000)
+              .setTitle(`⚠️ JOGO NÃO COMPARTILHÁVEL!`)
+              .setDescription(`**${userName}** comprou **${nome}**, mas ele NÃO é compatível com Family Sharing!`)
+              .addFields(
+                { name: '🔗 Link', value: `[Ver na Steam](${link})`, inline: false },
+                { name: '❌ Motivo', value: `${compat.motivo || 'Não compatível'}`, inline: false }
+              )
+              .setTimestamp();
+            await channelNotificacoes.send({ content: `⚠️ ${mention} comprou um jogo, mas ele NÃO é compatível com Family Sharing!`, embeds: [embed] });
+            */
           }
         }
       }
@@ -778,7 +738,7 @@ async function registrarComandos() {
     const commands = [
       {
         name: 'tem',
-        description: 'Verifica se um jogo está na biblioteca da família',
+        description: 'Verifica se um jogo está na biblioteca da família (com compatibilidade)',
         options: [{
           name: 'jogo',
           description: 'Nome do jogo ou link da Steam',
@@ -875,17 +835,17 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online!');
+    await dono.send('🚀 Bot Steam Família está online! @everyone ativado para jogos compatíveis.');
   } catch (_) {}
 });
 
 // ============================================================
-// 14. COMANDOS SLASH (COM VERIFICAÇÃO DE COMPATIBILIDADE)
+// 14. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  // /tem (COM VERIFICAÇÃO DE COMPATIBILIDADE)
+  // /tem
   if (interaction.commandName === 'tem') {
     await interaction.deferReply({ ephemeral: true });
     try {
@@ -905,8 +865,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // 🔥 VERIFICA COMPATIBILIDADE COM FAMILY SHARING
-      const isCompatible = await verificarCompatibilidadeFamilia(info.appid);
+      const compat = await verificarCompatibilidadeFamilia(info.appid);
 
       const donos = [];
       for (const sid of STEAM_IDS_ARRAY) {
@@ -920,22 +879,19 @@ client.on('interactionCreate', async (interaction) => {
         .setColor(donos.length > 0 ? 0x00FF00 : 0xFF0000)
         .setTitle(`${donos.length > 0 ? '✅' : '❌'} ${info.nome}`)
         .setURL(info.link)
-        .setFooter({ text: 'Steam Família - /tem' })
-        .setTimestamp();
-
+        .setFooter({ text: 'Steam Família' });
       if (info.capa) embed.setThumbnail(info.capa);
 
-      // Adiciona campo de compatibilidade
-      if (isCompatible) {
+      if (!compat.compatível) {
         embed.addFields({
-          name: '✅ Compatível com Família Steam',
-          value: 'Este jogo pode ser compartilhado com a família.',
+          name: '⚠️ ATENÇÃO',
+          value: `❌ **${compat.motivo || 'Este jogo NÃO é compatível com Family Sharing'}**\n\nVerifique a página do jogo na Steam para mais informações.`,
           inline: false
         });
       } else {
         embed.addFields({
-          name: '❌ INCOMPATÍVEL com Família Steam',
-          value: '⚠️ **Este jogo NÃO pode ser compartilhado via Família Steam!**\n\nVerifique a página do jogo para mais informações.',
+          name: '✅ Compatibilidade',
+          value: '✅ **Compatível com Família Steam!**',
           inline: false
         });
       }
