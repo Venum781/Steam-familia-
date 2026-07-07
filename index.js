@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - CORREÇÃO DE LANÇAMENTOS E PROMOÇÕES
+// BOT STEAM FAMÍLIA - PROMOÇÕES A CADA 5 MINUTOS E RESET AO READICIONAR
 // ============================================================
 
 require('dotenv').config();
@@ -233,7 +233,7 @@ function extrairAppIdDaUrl(url) {
 }
 
 // ============================================================
-// 5. FUNÇÕES DE NEGÓCIO (lista /quero) - CORRIGIDAS
+// 5. FUNÇÕES DE NEGÓCIO (lista /quero)
 // ============================================================
 async function adicionarQuero(discordId, appid, nome, link) {
   if (!db.listaQuero[discordId]) db.listaQuero[discordId] = [];
@@ -263,8 +263,16 @@ async function adicionarQuero(discordId, appid, nome, link) {
     nome,
     link,
     adicionado_em: new Date().toISOString(),
-    coming_soon: comingSoon // <--- NOVO CAMPO
+    coming_soon: comingSoon
   });
+
+  // 🔥 RESETA A NOTIFICAÇÃO DE PROMOÇÃO PARA ESTE JOGO (permite notificar novamente)
+  const chave = `${discordId}_${appid}`;
+  if (db.promocoesNotificadas && db.promocoesNotificadas[chave]) {
+    delete db.promocoesNotificadas[chave];
+    console.log(`🔄 Resetada notificação de promoção para ${nome} (${discordId})`);
+  }
+
   salvarDB(db);
   return { sucesso: true };
 }
@@ -274,6 +282,15 @@ function removerQuero(discordId, appid) {
   const antes = db.listaQuero[discordId].length;
   db.listaQuero[discordId] = db.listaQuero[discordId].filter(j => j.appid !== appid);
   if (db.listaQuero[discordId].length < antes) {
+    // 🔥 AO REMOVER, TAMBÉM REMOVE AS NOTIFICAÇÕES PARA PERMITIR RE-ADIÇÃO E RE-NOTIFICAÇÃO
+    const chave = `${discordId}_${appid}`;
+    if (db.promocoesNotificadas && db.promocoesNotificadas[chave]) {
+      delete db.promocoesNotificadas[chave];
+      console.log(`🗑️ Removida notificação de promoção para ${appid} (${discordId}) ao remover da lista`);
+    }
+    if (db.lancamentosNotificados && db.lancamentosNotificados[chave]) {
+      delete db.lancamentosNotificados[chave];
+    }
     salvarDB(db);
     return true;
   }
@@ -418,10 +435,10 @@ async function verificarConquistas(steamId, games, mention, userName) {
 }
 
 // ============================================================
-// 9. VERIFICAÇÃO DE LANÇAMENTOS (CORRIGIDA)
+// 9. VERIFICAÇÃO DE LANÇAMENTOS (5 minutos)
 // ============================================================
 async function verificarLancamentosQuero() {
-  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando lançamentos da lista /quero...`);
+  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando lançamentos...`);
 
   for (const [discordId, jogos] of Object.entries(db.listaQuero || {})) {
     if (!jogos || jogos.length === 0) continue;
@@ -436,17 +453,9 @@ async function verificarLancamentosQuero() {
 
     for (const jogo of jogos) {
       const chave = `${discordId}_${jogo.appid}`;
-
-      // Se já notificou este lançamento, pula
       if (db.lancamentosNotificados?.[chave]) continue;
+      if (jogo.coming_soon === false) continue;
 
-      // Se o jogo foi adicionado com coming_soon: false (já estava disponível), NUNCA notifica lançamento
-      if (jogo.coming_soon === false) {
-        // Não notifica lançamento, apenas promoções
-        continue;
-      }
-
-      // Se coming_soon é true ou null/indefinido, verificamos o estado atual
       const detalhes = await getGameDetails(jogo.appid);
       if (!detalhes) continue;
 
@@ -454,7 +463,6 @@ async function verificarLancamentosQuero() {
       const hasPrice = !!detalhes.price_overview;
       const isAvailable = (isComingSoon === false) && hasPrice;
 
-      // Só notifica se ANTES estava marcado como coming_soon (true) e AGORA está disponível
       if (jogo.coming_soon === true && isAvailable) {
         console.log(`🎉 ${usuario.username} - ${jogo.nome} FOI LANÇADO!`);
 
@@ -475,7 +483,6 @@ async function verificarLancamentosQuero() {
           console.log(`✅ DM de lançamento enviada para ${usuario.username}: ${jogo.nome}`);
           if (!db.lancamentosNotificados) db.lancamentosNotificados = {};
           db.lancamentosNotificados[chave] = Date.now();
-          // Atualiza o campo coming_soon para false, para não notificar novamente
           jogo.coming_soon = false;
           salvarDB(db);
           await new Promise(r => setTimeout(r, 1000));
@@ -488,12 +495,13 @@ async function verificarLancamentosQuero() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE PROMOÇÕES NA LISTA /QUERO (DM)
+// 10. VERIFICAÇÃO DE PROMOÇÕES (5 minutos)
 // ============================================================
 async function verificarPromocoesQuero() {
-  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções da lista /quero...`);
+  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções...`);
 
-  const UM_DIA = 86400000;
+  // 🔥 REMOVIDO O LIMITE DE 24 HORAS – AGORA NOTIFICA SEMPRE QUE O JOGO ESTIVER EM PROMOÇÃO
+  // (O controle agora é feito pelo reset ao adicionar/remover)
 
   for (const [discordId, jogos] of Object.entries(db.listaQuero || {})) {
     if (!jogos || jogos.length === 0) continue;
@@ -508,8 +516,12 @@ async function verificarPromocoesQuero() {
 
     for (const jogo of jogos) {
       const chave = `${discordId}_${jogo.appid}`;
-      const ultimaNotif = db.promocoesNotificadas?.[chave] || 0;
-      if (Date.now() - ultimaNotif < UM_DIA) continue;
+
+      // Verifica se já foi notificado para esta promoção (se sim, pula)
+      // Mas se o usuário removeu e adicionou novamente, a chave foi deletada, então vai notificar de novo
+      if (db.promocoesNotificadas?.[chave]) {
+        continue; // já notificado para este jogo desde a última adição
+      }
 
       const preco = await getPriceOverview(jogo.appid);
       if (!preco) continue;
@@ -535,7 +547,7 @@ async function verificarPromocoesQuero() {
           await usuario.send({ embeds: [embed] });
           console.log(`✅ DM de promoção enviada para ${usuario.username}: ${jogo.nome}`);
           if (!db.promocoesNotificadas) db.promocoesNotificadas = {};
-          db.promocoesNotificadas[chave] = Date.now();
+          db.promocoesNotificadas[chave] = Date.now(); // marca como notificado
           salvarDB(db);
           await new Promise(r => setTimeout(r, 1000));
         } catch (err) {
@@ -715,17 +727,19 @@ client.once('ready', async () => {
   setInterval(checkSteamGames, 15000);
   console.log(`🔄 Monitorando jogos a cada 15 segundos`);
 
+  // 🔥 LANÇAMENTOS a cada 5 minutos
   await verificarLancamentosQuero();
   setInterval(verificarLancamentosQuero, 5 * 60 * 1000);
   console.log(`🔄 Verificando lançamentos a cada 5 minutos`);
 
+  // 🔥 PROMOÇÕES a cada 5 minutos (AGORA IGUAL AOS LANÇAMENTOS)
   await verificarPromocoesQuero();
-  setInterval(verificarPromocoesQuero, 12 * 60 * 60 * 1000);
-  console.log(`🔄 Verificando promoções a cada 12 horas`);
+  setInterval(verificarPromocoesQuero, 5 * 60 * 1000);
+  console.log(`🔄 Verificando promoções a cada 5 minutos`);
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online! Correção de lançamentos aplicada.');
+    await dono.send('🚀 Bot Steam Família está online! Promoções verificadas a cada 5 minutos e reset ao readicionar.');
   } catch (_) {}
 });
 
@@ -786,7 +800,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.editReply({ embeds: [gerarRankingEmbed()] });
   }
 
-  // /quero (com suporte a links e mensagem personalizada)
+  // /quero
   if (interaction.commandName === 'quero') {
     await interaction.deferReply({ ephemeral: true });
     try {
@@ -826,7 +840,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // Verifica se o usuário já tem o jogo
       let userSteamId = null;
       for (const [sid, m] of Object.entries(MEMBROS)) {
         if (m.discordId === interaction.user.id) { userSteamId = sid; break; }
@@ -846,11 +859,8 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // Mensagem personalizada baseada no status do jogo
-      let mensagemAdicional = '';
       const isComingSoon = info.release_date?.coming_soon;
-      const hasPrice = !!info.release_date?.price_overview; // não temos price aqui, mas podemos verificar depois
-      // Para decidir a mensagem, usamos o coming_soon
+      let mensagemAdicional = '';
       if (isComingSoon === true) {
         mensagemAdicional = '🔔 Você receberá DM assim que este jogo for **LANÇADO**!';
       } else {
