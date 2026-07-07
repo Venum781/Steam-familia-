@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM SUPORTE A LINKS NO /quero
+// BOT STEAM FAMÍLIA - COM SUPORTE A LINKS E MENSAGENS PERSONALIZADAS
 // ============================================================
 
 require('dotenv').config();
@@ -760,7 +760,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 
   // ============================================================
-  // /quero - AGORA ACEITA LINKS DA STEAM
+  // /quero - COM MENSAGEM PERSONALIZADA
   // ============================================================
   if (interaction.commandName === 'quero') {
     await interaction.deferReply({ ephemeral: true });
@@ -778,13 +778,26 @@ client.on('interactionCreate', async (interaction) => {
               appid: appid,
               nome: detalhes.name,
               link: `https://store.steampowered.com/app/${appid}`,
-              capa: detalhes.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`
+              capa: detalhes.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
+              detalhes: detalhes // guarda os detalhes para verificar lançamento
             };
           }
         }
       } else {
         // Busca por nome
-        info = await searchGameOnSteam(input);
+        const busca = await searchGameOnSteam(input);
+        if (busca) {
+          const detalhes = await getGameDetails(busca.appid);
+          if (detalhes) {
+            info = {
+              appid: busca.appid,
+              nome: busca.nome,
+              link: busca.link,
+              capa: busca.capa,
+              detalhes: detalhes
+            };
+          }
+        }
       }
 
       if (!info) {
@@ -812,7 +825,27 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      await interaction.editReply(`✅ **${info.nome}** adicionado à sua lista /quero!\n🔗 ${info.link}\n🔔 Você receberá DM assim que este jogo for LANÇADO ou entrar em PROMOÇÃO!`);
+      // ============================================================
+      // DETERMINA A MENSAGEM COM BASE NO ESTADO DO JOGO
+      // ============================================================
+      let mensagemNotificacao = '';
+      const detalhes = info.detalhes;
+      if (detalhes) {
+        const isComingSoon = detalhes.release_date?.coming_soon;
+        const hasPrice = !!detalhes.price_overview;
+        const isAvailable = (isComingSoon === false) && hasPrice;
+
+        if (isAvailable) {
+          mensagemNotificacao = '🔔 Você receberá DM assim que este jogo entrar em **PROMOÇÃO**!';
+        } else {
+          mensagemNotificacao = '🔔 Você receberá DM assim que este jogo for **LANÇADO**!';
+        }
+      } else {
+        // Fallback caso não consiga obter detalhes
+        mensagemNotificacao = '🔔 Você receberá DM quando este jogo for lançado ou entrar em promoção!';
+      }
+
+      await interaction.editReply(`✅ **${info.nome}** adicionado à sua lista /quero!\n🔗 ${info.link}\n${mensagemNotificacao}`);
     } catch (err) {
       console.error('❌ Erro no /quero:', err);
       await interaction.editReply(`❌ Erro ao adicionar o jogo: ${err.message}`);
