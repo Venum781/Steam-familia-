@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM LOG DE POSIÇÃO DOS JOGOS RECENTES
+// BOT STEAM FAMÍLIA - DETECÇÃO DO JOGO ATUAL + 5 RECENTES
 // ============================================================
 
 require('dotenv').config();
@@ -155,7 +155,7 @@ async function getOwnedGames(steamId) {
   return data?.response?.games || [];
 }
 
-async function getRecentlyPlayedGames(steamId, limit = 3) {
+async function getRecentlyPlayedGames(steamId, limit = 5) {
   const data = await fetchSteam(
     'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/',
     { steamid: steamId, count: limit, format: 'json' }
@@ -224,6 +224,27 @@ async function getPriceOverview(appId) {
       }
     }
   } catch (_) {}
+  return null;
+}
+
+// 🔥 FUNÇÃO PARA DETECTAR O JOGO ATUAL
+async function getCurrentGame(steamId) {
+  try {
+    const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/`;
+    const params = { key: STEAM_KEY, steamids: steamId };
+    const data = await fetchSteam(url, params, 2);
+    if (data?.response?.players?.length) {
+      const player = data.response.players[0];
+      if (player.gameid) {
+        return {
+          appid: parseInt(player.gameid),
+          name: player.gameextrainfo || `Jogo ${player.gameid}`
+        };
+      }
+    }
+  } catch (e) {
+    console.error(`❌ Erro ao buscar jogo atual de ${steamId}:`, e.message);
+  }
   return null;
 }
 
@@ -446,20 +467,21 @@ async function enviarRanking() {
 // ============================================================
 // 8. VERIFICAÇÃO DE CONQUISTAS
 // ============================================================
-async function verificarConquistas(steamId, recentGames, mention, userName) {
-  if (!recentGames?.length) return;
+async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
+  if (!gamesToCheck?.length) return;
   const channel = client.channels.cache.get(ACHIEVEMENT_CHANNEL_ID);
   if (!channel) return;
 
   if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
 
-  const jogosParaVerificar = recentGames.filter(g => !db.jogosSemConquistas || !db.jogosSemConquistas[g.appid]);
+  // Filtra jogos marcados como sem conquistas
+  const jogosParaVerificar = gamesToCheck.filter(g => !db.jogosSemConquistas || !db.jogosSemConquistas[g.appid]);
 
   if (jogosParaVerificar.length === 0) {
     return;
   }
 
-  console.log(`🏆 ${userName}: verificando ${jogosParaVerificar.length} jogos recentes para novas conquistas...`);
+  console.log(`🏆 ${userName}: verificando ${jogosParaVerificar.length} jogos para novas conquistas...`);
 
   let novasConquistas = 0;
 
@@ -495,6 +517,7 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
     const total = desbloqueadas.length;
     const totalJogo = conquistas.length;
 
+    // Primeira vez que vê este jogo – salva sem notificar
     if (!db.conquistas[steamId][appid]) {
       db.conquistas[steamId][appid] = {
         total,
@@ -536,6 +559,7 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
       console.log(`      ✅ Notificação enviada: ${nomeBonito}`);
     }
 
+    // Atualiza estado
     db.conquistas[steamId][appid] = {
       total,
       nomes: desbloqueadas.map(c => c.apiname),
@@ -676,7 +700,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM LOG DE POSIÇÃO)
+// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM JOGO ATUAL E 5 RECENTES)
 // ============================================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -693,8 +717,6 @@ async function checkSteamGames() {
       const allGames = await getOwnedGames(steamId);
       if (!allGames.length) continue;
 
-      const recentGames = await getRecentlyPlayedGames(steamId, 3);
-
       const member = MEMBROS[steamId];
       if (!member) {
         console.warn(`⚠️ Steam ID ${steamId} não mapeado`);
@@ -704,12 +726,48 @@ async function checkSteamGames() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      // 🔥 NOVO LOG: mostra a POSIÇÃO de cada jogo recente (1º, 2º, 3º)
-      const listaComPosicao = recentGames.map((g, i) => `${i+1}º: ${g.name || g.appid}`).join(' | ');
-      console.log(`📋 ${userName}: jogos recentes -> ${listaComPosicao || 'nenhum jogo'}`);
+      // 🔥 1. Tenta detectar o jogo atual
+      const currentGame = await getCurrentGame(steamId);
 
-      await verificarConquistas(steamId, recentGames, mention, userName);
+      // 🔥 2. Busca 5 jogos recentes
+      let recentGames = await getRecentlyPlayedGames(steamId, 5);
 
+      // 🔥 3. Constrói a lista de jogos a verificar (priorizando o jogo atual)
+      let gamesToCheck = [];
+
+      if (currentGame) {
+        // Se houver jogo atual, coloca ele em primeiro lugar
+        const jaExiste = recentGames.some(g => g.appid === currentGame.appid);
+        const currentGameObj = {
+          appid: currentGame.appid,
+          name: currentGame.name,
+          rtime_last_played: Date.now() / 1000
+        };
+
+        if (jaExiste) {
+          // Remove da lista de recentes para não duplicar
+          recentGames = recentGames.filter(g => g.appid !== currentGame.appid);
+        }
+
+        // Monta a lista final: jogo atual + 4 primeiros recentes (total 5)
+        gamesToCheck = [currentGameObj, ...recentGames.slice(0, 4)];
+      } else {
+        // Sem jogo atual, usa os 5 recentes
+        gamesToCheck = recentGames.slice(0, 5);
+      }
+
+      // 🔥 4. Log detalhado com posições e indicador de jogo atual
+      const listaComPosicao = gamesToCheck.map((g, i) => {
+        const isCurrent = currentGame && g.appid === currentGame.appid;
+        return `${i+1}º: ${g.name || g.appid}${isCurrent ? ' 🟢' : ''}`;
+      }).join(' | ');
+
+      console.log(`📋 ${userName}: jogos a monitorar -> ${listaComPosicao}`);
+
+      // 🔥 5. Verifica conquistas nos jogos da lista
+      await verificarConquistas(steamId, gamesToCheck, mention, userName);
+
+      // 🔥 6. Monitoramento de novos jogos (para notificar compras)
       if (!previousGames[steamId]) {
         previousGames[steamId] = allGames.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
         console.log(`📊 ${userName}: ${allGames.length} jogos (histórico inicial salvo)`);
@@ -895,7 +953,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot online! Logs mostram posição dos jogos recentes (1º, 2º, 3º).');
+    await dono.send('🚀 Bot atualizado: detecção do jogo atual + 5 jogos recentes!');
   } catch (_) {}
 });
 
