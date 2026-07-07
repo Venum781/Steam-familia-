@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM @everyone E COMPATIBILIDADE
+// BOT STEAM FAMÍLIA - VERSÃO FINAL COMPLETA
 // ============================================================
 
 require('dotenv').config();
@@ -668,9 +668,9 @@ async function checkSteamGames() {
             if (detalhes?.header_image) embed.setImage(detalhes.header_image);
 
             // 🔥 ENVIA COM @everyone E MENÇÃO AO COMPRADOR
-            await channelNotificacoes.send({ 
-              content: `@everyone 🎉 **${userName}** comprou um novo jogo!`, 
-              embeds: [embed] 
+            await channelNotificacoes.send({
+              content: `@everyone 🎉 **${userName}** comprou um novo jogo!`,
+              embeds: [embed]
             });
 
             if (db.ranking[steamId]) {
@@ -695,20 +695,6 @@ async function checkSteamGames() {
           } else {
             // 🔥 JOGO INCOMPATÍVEL - NÃO ANUNCIA COM @everyone, apenas log
             console.log(`⚠️ Jogo ${nome} (${appid}) é INCOMPATÍVEL com Family Sharing - não anunciado. Motivo: ${compat.motivo}`);
-            
-            // Opcional: Envia uma mensagem discreta sem @everyone (descomente se quiser)
-            /*
-            const embed = new EmbedBuilder()
-              .setColor(0xFF0000)
-              .setTitle(`⚠️ JOGO NÃO COMPARTILHÁVEL!`)
-              .setDescription(`**${userName}** comprou **${nome}**, mas ele NÃO é compatível com Family Sharing!`)
-              .addFields(
-                { name: '🔗 Link', value: `[Ver na Steam](${link})`, inline: false },
-                { name: '❌ Motivo', value: `${compat.motivo || 'Não compatível'}`, inline: false }
-              )
-              .setTimestamp();
-            await channelNotificacoes.send({ content: `⚠️ ${mention} comprou um jogo, mas ele NÃO é compatível com Family Sharing!`, embeds: [embed] });
-            */
           }
         }
       }
@@ -845,7 +831,7 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  // /tem
+  // /tem (COM COMPATIBILIDADE NA DESCRIÇÃO - SEM CAMPO SEPARADO)
   if (interaction.commandName === 'tem') {
     await interaction.deferReply({ ephemeral: true });
     try {
@@ -882,27 +868,23 @@ client.on('interactionCreate', async (interaction) => {
         .setFooter({ text: 'Steam Família' });
       if (info.capa) embed.setThumbnail(info.capa);
 
-      if (!compat.compatível) {
-        embed.addFields({
-          name: '⚠️ ATENÇÃO',
-          value: `❌ **${compat.motivo || 'Este jogo NÃO é compatível com Family Sharing'}**\n\nVerifique a página do jogo na Steam para mais informações.`,
-          inline: false
-        });
+      // 🔥 CONSTRÓI A DESCRIÇÃO COM OS DONOS E COMPATIBILIDADE
+      let descricao = '';
+      if (donos.length) {
+        descricao = `🎮 **${donos.length} membro(s) possui(em):**\n`;
+        donos.forEach((d, i) => descricao += `**${i+1}.** <@${d.discordId}>\n`);
       } else {
-        embed.addFields({
-          name: '✅ Compatibilidade',
-          value: '✅ **Compatível com Família Steam!**',
-          inline: false
-        });
+        descricao = '😕 **Nenhum membro da família possui este jogo.**';
       }
 
-      if (donos.length) {
-        let desc = `🎮 **${donos.length} membro(s) possui(em):**\n`;
-        donos.forEach((d, i) => desc += `**${i+1}.** <@${d.discordId}>\n`);
-        embed.setDescription(desc);
+      // 🔥 ADICIONA A COMPATIBILIDADE DIRETAMENTE NA DESCRIÇÃO (SEM CAMPO SEPARADO)
+      if (compat.compatível) {
+        descricao += '\n✅ **Compatível com Família Steam!**';
       } else {
-        embed.setDescription('😕 **Nenhum membro da família possui este jogo.**');
+        descricao += `\n\n⚠️ **ATENÇÃO:** ❌ **${compat.motivo || 'Este jogo NÃO é compatível com Family Sharing'}**\nVerifique a página do jogo na Steam para mais informações.`;
       }
+
+      embed.setDescription(descricao);
 
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
@@ -911,7 +893,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /ranking
+  // /ranking (EFÊMERO)
   if (interaction.commandName === 'ranking') {
     await interaction.deferReply({ ephemeral: true });
     const embed = gerarRankingEmbed();
