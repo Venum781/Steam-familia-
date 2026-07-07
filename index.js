@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - DETECÇÃO AUTOMÁTICA DE PROMOÇÕES
+// BOT STEAM FAMÍLIA - CONQUISTAS COM NOMES CORRETOS
 // ============================================================
 
 require('dotenv').config();
@@ -225,6 +225,36 @@ async function getPriceOverview(appId) {
   return null;
 }
 
+// 🔥 CACHE PARA NOMES DE CONQUISTAS (evita chamadas repetidas)
+const achievementNameCache = {};
+
+async function getAchievementDisplayName(appId, apiname) {
+  const cacheKey = `${appId}_${apiname}`;
+  if (achievementNameCache[cacheKey]) {
+    return achievementNameCache[cacheKey];
+  }
+
+  try {
+    const url = `https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/`;
+    const params = { key: STEAM_KEY, appid: appId, l: 'portuguese' };
+    const data = await fetchSteam(url, params, 2);
+
+    if (data?.game?.availableGameStats?.achievements) {
+      const ach = data.game.availableGameStats.achievements.find(a => a.name === apiname);
+      if (ach && ach.displayName) {
+        achievementNameCache[cacheKey] = ach.displayName;
+        return ach.displayName;
+      }
+    }
+  } catch (_) {
+    // Se falhar, retorna o apiname mesmo
+  }
+
+  // Fallback: retorna o apiname
+  achievementNameCache[cacheKey] = apiname;
+  return apiname;
+}
+
 function extrairAppIdDaUrl(url) {
   const match = url.match(/store\.steampowered\.com\/app\/(\d+)/);
   return match ? parseInt(match[1]) : null;
@@ -245,7 +275,6 @@ async function adicionarQuero(discordId, appid, nome, link) {
     }
   }
 
-  // 🔥 SALVA O STATUS DE "coming_soon"
   let comingSoon = null;
   try {
     const detalhes = await getGameDetails(appid);
@@ -256,14 +285,13 @@ async function adicionarQuero(discordId, appid, nome, link) {
     comingSoon = null;
   }
 
-  // 🔥 NOVO CAMPO: ultimoEstadoPromocao (null = nunca verificado)
   db.listaQuero[discordId].push({
     appid,
     nome,
     link,
     adicionado_em: new Date().toISOString(),
     coming_soon: comingSoon,
-    ultimoEstadoPromocao: null // <--- estado inicial (desconhecido)
+    ultimoEstadoPromocao: null
   });
 
   salvarDB(db);
@@ -275,7 +303,6 @@ function removerQuero(discordId, appid) {
   const antes = db.listaQuero[discordId].length;
   db.listaQuero[discordId] = db.listaQuero[discordId].filter(j => j.appid !== appid);
   if (db.listaQuero[discordId].length < antes) {
-    // Remove notificações de lançamento (se houver)
     const chave = `${discordId}_${appid}`;
     if (db.lancamentosNotificados && db.lancamentosNotificados[chave]) {
       delete db.lancamentosNotificados[chave];
@@ -348,7 +375,7 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS
+// 8. VERIFICAÇÃO DE CONQUISTAS (COM NOMES CORRETOS)
 // ============================================================
 async function verificarConquistas(steamId, games, mention, userName) {
   if (!games?.length) return;
@@ -357,6 +384,7 @@ async function verificarConquistas(steamId, games, mention, userName) {
 
   if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
 
+  // Pega os 3 jogos mais recentes
   const recentes = games
     .filter(g => g.rtime_last_played > 0)
     .sort((a, b) => b.rtime_last_played - a.rtime_last_played)
@@ -378,6 +406,7 @@ async function verificarConquistas(steamId, games, mention, userName) {
     const total = desbloqueadas.length;
     const totalJogo = conquistas.length;
 
+    // Primeira execução: salva estado sem notificar
     if (!db.conquistas[steamId][appid] || !primeiraVerificacaoConcluida) {
       db.conquistas[steamId][appid] = {
         total,
@@ -397,11 +426,12 @@ async function verificarConquistas(steamId, games, mention, userName) {
     const progresso = `${total}/${totalJogo}`;
 
     for (const ach of novas) {
-      const nomeConquista = ach.name || ach.apiname;
+      // 🔥 BUSCA O NOME AMIGÁVEL DA CONQUISTA
+      const nomeBonito = await getAchievementDisplayName(appid, ach.apiname);
       const embed = new EmbedBuilder()
         .setColor(0xFFD700)
         .setTitle(`🏆 ${userName} desbloqueou uma conquista!`)
-        .setDescription(`**${nomeConquista}**`)
+        .setDescription(`**${nomeBonito}**`)
         .addFields(
           { name: '🎮 Jogo', value: gameName, inline: true },
           { name: '👤 Jogador', value: mention, inline: true },
@@ -414,6 +444,7 @@ async function verificarConquistas(steamId, games, mention, userName) {
       await channel.send({ embeds: [embed] });
     }
 
+    // Atualiza estado
     db.conquistas[steamId][appid] = {
       total,
       nomes: desbloqueadas.map(c => c.apiname),
@@ -501,15 +532,12 @@ async function verificarPromocoesQuero() {
     }
 
     for (const jogo of jogos) {
-      // Busca o preço atual
       const preco = await getPriceOverview(jogo.appid);
       if (!preco) continue;
 
       const estaEmPromocao = preco.emPromocao && preco.desconto > 0;
-      const estadoAnterior = jogo.ultimoEstadoPromocao; // true, false ou null
+      const estadoAnterior = jogo.ultimoEstadoPromocao;
 
-      // 🔥 DETECTA TRANSIÇÃO: null -> true (primeira vez que entra em promoção)
-      // OU false -> true (saiu da promoção e voltou)
       if (estaEmPromocao && (estadoAnterior === false || estadoAnterior === null)) {
         console.log(`🎉 ${usuario.username} - ${jogo.nome} ENTROU EM PROMOÇÃO! (${preco.desconto}% OFF)`);
 
@@ -534,24 +562,20 @@ async function verificarPromocoesQuero() {
           console.error(`❌ Erro ao enviar DM para ${usuario.username}:`, err.message);
         }
 
-        // Atualiza o estado para "em promoção"
         jogo.ultimoEstadoPromocao = true;
         salvarDB(db);
         await new Promise(r => setTimeout(r, 1000));
 
       } else if (!estaEmPromocao && estadoAnterior === true) {
-        // Saiu da promoção – apenas atualiza o estado, sem notificar
         console.log(`📉 ${usuario.username} - ${jogo.nome} saiu da promoção.`);
         jogo.ultimoEstadoPromocao = false;
         salvarDB(db);
 
       } else if (estadoAnterior === null) {
-        // Primeira verificação – apenas define o estado inicial, sem notificar
         console.log(`📊 ${usuario.username} - ${jogo.nome}: estado inicial = ${estaEmPromocao ? 'em promoção' : 'não em promoção'}`);
         jogo.ultimoEstadoPromocao = estaEmPromocao;
         salvarDB(db);
       }
-      // Se ambos são iguais (true/true ou false/false), não faz nada
     }
   }
 }
@@ -735,7 +759,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: detecção automática de promoções ativada!');
+    await dono.send('🚀 Bot atualizado: nomes de conquistas corrigidos!');
   } catch (_) {}
 });
 
