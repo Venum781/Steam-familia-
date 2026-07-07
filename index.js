@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - LISTA DE INCOMPATÍVEIS CORRIGIDA
+// BOT STEAM FAMÍLIA - CONQUISTAS APENAS EM JOGOS RECENTES
 // ============================================================
 
 require('dotenv').config();
@@ -153,10 +153,11 @@ async function getOwnedGames(steamId) {
   return data?.response?.games || [];
 }
 
-async function getRecentlyPlayed(steamId) {
+// 🔥 APENAS JOGOS RECENTES (últimas 2 semanas)
+async function getRecentlyPlayedGames(steamId, limit = 10) {
   const data = await fetchSteam(
     'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/',
-    { steamid: steamId, count: 50, format: 'json' }
+    { steamid: steamId, count: limit, format: 'json' }
   );
   return data?.response?.games || [];
 }
@@ -251,14 +252,14 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
-// 🔥 LISTA DE JOGOS INCOMPATÍVEIS COM FAMILY SHARING (COMPLETA)
+// 🔥 LISTA DE JOGOS INCOMPATÍVEIS
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
   107410: "Arma 3",
   582660: "Black Desert",
   1097150: "Fall Guys",
   220240: "Far Cry 3",
-  298110: "Far Cry 4",        // 🔥 FIX: Far Cry 4 agora está na lista
+  298110: "Far Cry 4",
   552520: "Far Cry 5",
   304390: "FOR HONOR",
   1546970: "Grand Theft Auto III – The Definitive Edition",
@@ -288,9 +289,7 @@ const JOGOS_INCOMPATIVEIS = {
   1222700: "A Way Out"
 };
 
-// 🔥 FUNÇÃO PARA VERIFICAR COMPATIBILIDADE COM FAMILY SHARING
 async function verificarCompatibilidadeFamilia(appId) {
-  // 1. Verifica na lista manual
   if (JOGOS_INCOMPATIVEIS[appId]) {
     return {
       compatível: false,
@@ -298,7 +297,6 @@ async function verificarCompatibilidadeFamilia(appId) {
     };
   }
 
-  // 2. Verifica via API
   try {
     const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&l=portuguese`;
     const resp = await axios.get(url, { timeout: 10000 });
@@ -323,7 +321,6 @@ async function verificarCompatibilidadeFamilia(appId) {
     console.error(`❌ Erro ao verificar compatibilidade do jogo ${appId}:`, e.message);
   }
   
-  // Fallback: assume compatível se não estiver na lista e não houver erro
   return { compatível: true, motivo: null };
 }
 
@@ -447,21 +444,18 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS
+// 8. VERIFICAÇÃO DE CONQUISTAS (APENAS JOGOS RECENTES)
 // ============================================================
-async function verificarConquistas(steamId, games, mention, userName) {
-  if (!games?.length) return;
+async function verificarConquistas(steamId, recentGames, mention, userName) {
+  if (!recentGames?.length) return;
   const channel = client.channels.cache.get(ACHIEVEMENT_CHANNEL_ID);
   if (!channel) return;
 
   if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
 
-  const recentes = games
-    .filter(g => g.rtime_last_played > 0)
-    .sort((a, b) => b.rtime_last_played - a.rtime_last_played)
-    .slice(0, 3);
+  console.log(`🏆 ${userName}: verificando ${recentGames.length} jogos recentes para conquistas...`);
 
-  for (const game of recentes) {
+  for (const game of recentGames) {
     const appid = game.appid;
     const gameName = game.name || `Jogo ${appid}`;
 
@@ -469,20 +463,25 @@ async function verificarConquistas(steamId, games, mention, userName) {
     try {
       conquistas = await getPlayerAchievements(steamId, appid);
     } catch (_) {
+      console.log(`   ⚠️ ${gameName}: erro ao buscar conquistas, pulando.`);
       continue;
     }
-    if (!conquistas || conquistas.length === 0) continue;
+    if (!conquistas || conquistas.length === 0) {
+      continue;
+    }
 
     const desbloqueadas = conquistas.filter(c => c.achieved === 1);
     const total = desbloqueadas.length;
     const totalJogo = conquistas.length;
 
+    // Se não existe estado salvo ou é a primeira execução, salva sem notificar
     if (!db.conquistas[steamId][appid] || !primeiraVerificacaoConcluida) {
       db.conquistas[steamId][appid] = {
         total,
         nomes: desbloqueadas.map(c => c.apiname),
         totalJogo
       };
+      console.log(`   💾 ${gameName}: ${total}/${totalJogo} conquistas salvas (estado inicial)`);
       salvarDB(db);
       continue;
     }
@@ -494,6 +493,8 @@ async function verificarConquistas(steamId, games, mention, userName) {
 
     const faltam = totalJogo - total;
     const progresso = `${total}/${totalJogo}`;
+
+    console.log(`   🆕 ${userName}: ${novas.length} nova(s) conquista(s) em ${gameName}!`);
 
     for (const ach of novas) {
       const nomeBonito = await getAchievementDisplayName(appid, ach.apiname);
@@ -511,8 +512,10 @@ async function verificarConquistas(steamId, games, mention, userName) {
       const detalhes = await getGameDetails(appid);
       if (detalhes?.header_image) embed.setThumbnail(detalhes.header_image);
       await channel.send({ embeds: [embed] });
+      console.log(`      ✅ Notificação enviada: ${nomeBonito}`);
     }
 
+    // Atualiza estado
     db.conquistas[steamId][appid] = {
       total,
       nomes: desbloqueadas.map(c => c.apiname),
@@ -583,7 +586,7 @@ async function verificarLancamentosQuero() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE PROMOÇÕES COM DETECÇÃO DE MUDANÇA DE ESTADO
+// 10. VERIFICAÇÃO DE PROMOÇÕES
 // ============================================================
 async function verificarPromocoesQuero() {
   console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções...`);
@@ -649,7 +652,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM @everyone E COMPATIBILIDADE)
+// 11. VERIFICAÇÃO DE NOVOS JOGOS
 // ============================================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -663,10 +666,12 @@ async function checkSteamGames() {
 
   for (const steamId of STEAM_IDS_ARRAY) {
     try {
-      const games = await getOwnedGames(steamId);
-      if (!games.length) continue;
+      const allGames = await getOwnedGames(steamId);
+      if (!allGames.length) continue;
 
-      const currentGames = games.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
+      // 🔥 CONQUISTAS: APENAS jogos recentes (10 primeiros)
+      const recentGames = await getRecentlyPlayedGames(steamId, 10);
+
       const member = MEMBROS[steamId];
       if (!member) {
         console.warn(`⚠️ Steam ID ${steamId} não mapeado`);
@@ -676,18 +681,20 @@ async function checkSteamGames() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      await verificarConquistas(steamId, currentGames, mention, userName);
+      // Verifica conquistas apenas nos jogos recentes
+      await verificarConquistas(steamId, recentGames, mention, userName);
 
+      // Monitoramento de novos jogos (para notificar compras)
       if (!previousGames[steamId]) {
-        previousGames[steamId] = currentGames;
-        console.log(`📊 ${userName}: ${currentGames.length} jogos (histórico inicial salvo)`);
-        db.historicoJogos[steamId] = currentGames.map(g => g.appid);
+        previousGames[steamId] = allGames.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
+        console.log(`📊 ${userName}: ${allGames.length} jogos (histórico inicial salvo)`);
+        db.historicoJogos[steamId] = allGames.map(g => g.appid);
         salvarDB(db);
         continue;
       }
 
       const oldIds = previousGames[steamId].map(g => g.appid);
-      const newGames = currentGames.filter(g => !oldIds.includes(g.appid));
+      const newGames = allGames.filter(g => !oldIds.includes(g.appid));
 
       if (newGames.length) {
         console.log(`🎮 ${userName} +${newGames.length} novo(s) jogo(s)!`);
@@ -697,10 +704,8 @@ async function checkSteamGames() {
           const nome = game.name || `App ${appid}`;
           const link = `https://store.steampowered.com/app/${appid}`;
 
-          // 🔥 VERIFICA COMPATIBILIDADE (USANDO A LISTA)
           const compat = await verificarCompatibilidadeFamilia(appid);
 
-          // 🔥 SÓ ANUNCIA SE FOR COMPATÍVEL
           if (compat.compatível) {
             const embed = new EmbedBuilder()
               .setColor(0x00FF00)
@@ -714,7 +719,6 @@ async function checkSteamGames() {
             const detalhes = await getGameDetails(appid);
             if (detalhes?.header_image) embed.setImage(detalhes.header_image);
 
-            // 🔥 ENVIA COM @everyone E MENÇÃO AO COMPRADOR
             await channelNotificacoes.send({
               content: `@everyone 🎉 **${userName}** comprou um novo jogo!`,
               embeds: [embed]
@@ -726,7 +730,6 @@ async function checkSteamGames() {
               await enviarRanking();
             }
 
-            // Remove da lista /quero de quem tinha
             for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
               if (!jogos) continue;
               for (const j of jogos) {
@@ -740,13 +743,12 @@ async function checkSteamGames() {
               }
             }
           } else {
-            // 🔥 JOGO INCOMPATÍVEL - NÃO ANUNCIA COM @everyone, apenas log
-            console.log(`⚠️ Jogo ${nome} (${appid}) é INCOMPATÍVEL com Family Sharing - não anunciado. Motivo: ${compat.motivo}`);
+            console.log(`⚠️ Jogo ${nome} (${appid}) é INCOMPATÍVEL com Family Sharing - não anunciado.`);
           }
         }
       }
-      previousGames[steamId] = currentGames;
-      db.historicoJogos[steamId] = currentGames.map(g => g.appid);
+      previousGames[steamId] = allGames.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
+      db.historicoJogos[steamId] = allGames.map(g => g.appid);
       salvarDB(db);
 
     } catch (err) {
@@ -868,7 +870,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online! Lista de jogos incompatíveis corrigida.');
+    await dono.send('🚀 Bot atualizado: conquistas apenas em jogos recentes.');
   } catch (_) {}
 });
 
@@ -878,14 +880,12 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  // /tem (COM COMPATIBILIDADE NA DESCRIÇÃO - USANDO A LISTA)
+  // /tem
   if (interaction.commandName === 'tem') {
     await interaction.deferReply({ ephemeral: true });
     try {
       const input = interaction.options.getString('jogo');
       let info = null;
-      
-      // 🔥 VERIFICA SE É UM LINK DA STEAM
       if (input.includes('store.steampowered.com/app/')) {
         const appid = extrairAppIdDaUrl(input);
         if (appid) {
@@ -893,16 +893,13 @@ client.on('interactionCreate', async (interaction) => {
           if (detalhes) info = { appid, nome: detalhes.name, link: `https://store.steampowered.com/app/${appid}`, capa: detalhes.header_image };
         }
       } else {
-        // BUSCA POR NOME
         info = await searchGameOnSteam(input);
       }
-      
       if (!info) {
         await interaction.editReply(`❌ Não encontrei **${input}** na Steam.`);
         return;
       }
 
-      // 🔥 VERIFICA COMPATIBILIDADE (COM A LISTA)
       const compat = await verificarCompatibilidadeFamilia(info.appid);
 
       const donos = [];
@@ -920,7 +917,6 @@ client.on('interactionCreate', async (interaction) => {
         .setFooter({ text: 'Steam Família' });
       if (info.capa) embed.setThumbnail(info.capa);
 
-      // 🔥 CONSTRÓI A DESCRIÇÃO COM OS DONOS E COMPATIBILIDADE
       let descricao = '';
       if (donos.length) {
         descricao = `🎮 **${donos.length} membro(s) possui(em):**\n`;
@@ -929,7 +925,6 @@ client.on('interactionCreate', async (interaction) => {
         descricao = '😕 **Nenhum membro da família possui este jogo.**';
       }
 
-      // 🔥 ADICIONA A COMPATIBILIDADE DIRETAMENTE NA DESCRIÇÃO
       if (compat.compatível) {
         descricao += '\n✅ **Compatível com Família Steam!**';
       } else {
@@ -945,7 +940,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /ranking (EFÊMERO)
+  // /ranking
   if (interaction.commandName === 'ranking') {
     await interaction.deferReply({ ephemeral: true });
     const embed = gerarRankingEmbed();
