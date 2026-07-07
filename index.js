@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - CONQUISTAS COM NOMES CORRETOS
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM CORREÇÕES
 // ============================================================
 
 require('dotenv').config();
@@ -225,7 +225,7 @@ async function getPriceOverview(appId) {
   return null;
 }
 
-// 🔥 CACHE PARA NOMES DE CONQUISTAS (evita chamadas repetidas)
+// Cache para nomes de conquistas
 const achievementNameCache = {};
 
 async function getAchievementDisplayName(appId, apiname) {
@@ -246,11 +246,8 @@ async function getAchievementDisplayName(appId, apiname) {
         return ach.displayName;
       }
     }
-  } catch (_) {
-    // Se falhar, retorna o apiname mesmo
-  }
+  } catch (_) {}
 
-  // Fallback: retorna o apiname
   achievementNameCache[cacheKey] = apiname;
   return apiname;
 }
@@ -375,7 +372,7 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS (COM NOMES CORRETOS)
+// 8. VERIFICAÇÃO DE CONQUISTAS
 // ============================================================
 async function verificarConquistas(steamId, games, mention, userName) {
   if (!games?.length) return;
@@ -384,7 +381,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
 
   if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
 
-  // Pega os 3 jogos mais recentes
   const recentes = games
     .filter(g => g.rtime_last_played > 0)
     .sort((a, b) => b.rtime_last_played - a.rtime_last_played)
@@ -406,7 +402,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
     const total = desbloqueadas.length;
     const totalJogo = conquistas.length;
 
-    // Primeira execução: salva estado sem notificar
     if (!db.conquistas[steamId][appid] || !primeiraVerificacaoConcluida) {
       db.conquistas[steamId][appid] = {
         total,
@@ -426,7 +421,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
     const progresso = `${total}/${totalJogo}`;
 
     for (const ach of novas) {
-      // 🔥 BUSCA O NOME AMIGÁVEL DA CONQUISTA
       const nomeBonito = await getAchievementDisplayName(appid, ach.apiname);
       const embed = new EmbedBuilder()
         .setColor(0xFFD700)
@@ -444,7 +438,6 @@ async function verificarConquistas(steamId, games, mention, userName) {
       await channel.send({ embeds: [embed] });
     }
 
-    // Atualiza estado
     db.conquistas[steamId][appid] = {
       total,
       nomes: desbloqueadas.map(c => c.apiname),
@@ -515,7 +508,7 @@ async function verificarLancamentosQuero() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE PROMOÇÕES COM DETECÇÃO DE MUDANÇA DE ESTADO
+// 10. VERIFICAÇÃO DE PROMOÇÕES
 // ============================================================
 async function verificarPromocoesQuero() {
   console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções...`);
@@ -637,12 +630,14 @@ async function checkSteamGames() {
           if (detalhes?.header_image) embed.setImage(detalhes.header_image);
           await channelNotificacoes.send({ content: mention, embeds: [embed] });
 
+          // Atualiza ranking e envia mensagem no canal de ranking
           if (db.ranking[steamId]) {
             db.ranking[steamId].jogos += 1;
             salvarDB(db);
-            await enviarRanking();
+            await enviarRanking(); // só envia quando há mudança real
           }
 
+          // Remove da lista /quero de quem tinha
           for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
             if (!jogos) continue;
             for (const j of jogos) {
@@ -731,7 +726,7 @@ client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
-  await enviarRanking();
+  // ⚠️ NÃO ENVIA RANKING AUTOMATICAMENTE NA INICIALIZAÇÃO
 
   if (!db.historicoJogos || Object.keys(db.historicoJogos).length === 0) {
     console.log('🔄 Inicializando histórico de jogos...');
@@ -755,11 +750,11 @@ client.once('ready', async () => {
 
   await verificarPromocoesQuero();
   setInterval(verificarPromocoesQuero, 5 * 60 * 1000);
-  console.log(`🔄 Verificando promoções a cada 5 minutos (com detecção automática)`);
+  console.log(`🔄 Verificando promoções a cada 5 minutos`);
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: nomes de conquistas corrigidos!');
+    await dono.send('🚀 Bot Steam Família está online! Ranking apenas sob comando ou mudanças.');
   } catch (_) {}
 });
 
@@ -814,10 +809,15 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /ranking
+  // /ranking (AGORA EFÊMERO)
   if (interaction.commandName === 'ranking') {
     await interaction.deferReply({ ephemeral: true });
-    await interaction.editReply({ embeds: [gerarRankingEmbed()] });
+    try {
+      const embed = gerarRankingEmbed();
+      await interaction.editReply({ embeds: [embed] });
+    } catch (err) {
+      await interaction.editReply(`❌ Erro: ${err.message}`);
+    }
   }
 
   // /quero
@@ -968,7 +968,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /dbstatus
+  // /dbstatus (apenas dono)
   if (interaction.commandName === 'dbstatus') {
     if (interaction.user.id !== DONO_ID) {
       await interaction.reply({ content: '❌ Apenas o dono.', ephemeral: true });
@@ -983,7 +983,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 15. !resetranking
+// 15. !resetranking (apenas dono)
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.author.id !== DONO_ID) return;
@@ -1000,7 +1000,7 @@ client.on('messageCreate', async (message) => {
       if (db.ranking[sid]) db.ranking[sid].jogos = 0;
     }
     salvarDB(db);
-    await enviarRanking();
+    await enviarRanking(); // atualiza o ranking no canal (apenas uma mensagem)
     await message.reply('✅ Ranking resetado.');
   });
   collector.on('end', collected => {
