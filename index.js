@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM LISTA DE JOGOS INCOMPATÍVEIS
+// BOT STEAM FAMÍLIA - LISTA DE INCOMPATÍVEIS CORRIGIDA
 // ============================================================
 
 require('dotenv').config();
@@ -251,14 +251,14 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
-// 🔥 LISTA DE JOGOS INCOMPATÍVEIS COM FAMILY SHARING
+// 🔥 LISTA DE JOGOS INCOMPATÍVEIS COM FAMILY SHARING (COMPLETA)
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
   107410: "Arma 3",
   582660: "Black Desert",
   1097150: "Fall Guys",
   220240: "Far Cry 3",
-  298110: "Far Cry 4",
+  298110: "Far Cry 4",        // 🔥 FIX: Far Cry 4 agora está na lista
   552520: "Far Cry 5",
   304390: "FOR HONOR",
   1546970: "Grand Theft Auto III – The Definitive Edition",
@@ -868,7 +868,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online! Lista de jogos incompatíveis adicionada.');
+    await dono.send('🚀 Bot Steam Família está online! Lista de jogos incompatíveis corrigida.');
   } catch (_) {}
 });
 
@@ -884,6 +884,8 @@ client.on('interactionCreate', async (interaction) => {
     try {
       const input = interaction.options.getString('jogo');
       let info = null;
+      
+      // 🔥 VERIFICA SE É UM LINK DA STEAM
       if (input.includes('store.steampowered.com/app/')) {
         const appid = extrairAppIdDaUrl(input);
         if (appid) {
@@ -891,8 +893,10 @@ client.on('interactionCreate', async (interaction) => {
           if (detalhes) info = { appid, nome: detalhes.name, link: `https://store.steampowered.com/app/${appid}`, capa: detalhes.header_image };
         }
       } else {
+        // BUSCA POR NOME
         info = await searchGameOnSteam(input);
       }
+      
       if (!info) {
         await interaction.editReply(`❌ Não encontrei **${input}** na Steam.`);
         return;
