@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - APENAS 3 JOGOS RECENTES
+// BOT STEAM FAMÍLIA - COM LOG DOS 3 JOGOS RECENTES
 // ============================================================
 
 require('dotenv').config();
@@ -155,7 +155,6 @@ async function getOwnedGames(steamId) {
   return data?.response?.games || [];
 }
 
-// 🔥 APENAS 3 JOGOS RECENTES
 async function getRecentlyPlayedGames(steamId, limit = 3) {
   const data = await fetchSteam(
     'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/',
@@ -445,7 +444,7 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS (APENAS 3 JOGOS RECENTES)
+// 8. VERIFICAÇÃO DE CONQUISTAS
 // ============================================================
 async function verificarConquistas(steamId, recentGames, mention, userName) {
   if (!recentGames?.length) return;
@@ -454,7 +453,6 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
 
   if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
 
-  // 🔥 Filtra jogos que já foram marcados como sem conquistas
   const jogosParaVerificar = recentGames.filter(g => !db.jogosSemConquistas || !db.jogosSemConquistas[g.appid]);
 
   if (jogosParaVerificar.length === 0) {
@@ -473,7 +471,6 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
     try {
       conquistas = await getPlayerAchievements(steamId, appid);
     } catch (e) {
-      // Marca como sem conquistas e pula
       if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
       db.jogosSemConquistas[appid] = {
         nome: gameName,
@@ -484,7 +481,6 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
       continue;
     }
     if (!conquistas || conquistas.length === 0) {
-      // Jogo sem conquistas
       if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
       db.jogosSemConquistas[appid] = {
         nome: gameName,
@@ -499,7 +495,6 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
     const total = desbloqueadas.length;
     const totalJogo = conquistas.length;
 
-    // 🔥 Se o jogo não está no banco, salva o estado atual (primeira vez que aparece)
     if (!db.conquistas[steamId][appid]) {
       db.conquistas[steamId][appid] = {
         total,
@@ -541,7 +536,6 @@ async function verificarConquistas(steamId, recentGames, mention, userName) {
       console.log(`      ✅ Notificação enviada: ${nomeBonito}`);
     }
 
-    // Atualiza estado
     db.conquistas[steamId][appid] = {
       total,
       nomes: desbloqueadas.map(c => c.apiname),
@@ -682,7 +676,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS
+// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM LOG DOS 3 RECENTES)
 // ============================================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -699,7 +693,6 @@ async function checkSteamGames() {
       const allGames = await getOwnedGames(steamId);
       if (!allGames.length) continue;
 
-      // 🔥 APENAS 3 JOGOS RECENTES
       const recentGames = await getRecentlyPlayedGames(steamId, 3);
 
       const member = MEMBROS[steamId];
@@ -711,10 +704,12 @@ async function checkSteamGames() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      // 🔥 Verifica conquistas apenas nos 3 jogos recentes
+      // 🔥 NOVO LOG: mostra os 3 jogos recentes de cada membro
+      const nomesJogos = recentGames.map(g => g.name || g.appid).join(', ') || 'nenhum jogo';
+      console.log(`📋 ${userName}: jogos recentes -> ${nomesJogos}`);
+
       await verificarConquistas(steamId, recentGames, mention, userName);
 
-      // Monitoramento de novos jogos
       if (!previousGames[steamId]) {
         previousGames[steamId] = allGames.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
         console.log(`📊 ${userName}: ${allGames.length} jogos (histórico inicial salvo)`);
@@ -855,9 +850,6 @@ client.once('ready', async () => {
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
 
-  // 🔥 NÃO INICIALIZA MAIS O BANCO DE CONQUISTAS COMPLETO
-  // Apenas carrega o histórico de jogos existente
-
   if (db.historicoJogos && Object.keys(db.historicoJogos).length > 0) {
     console.log('📚 Histórico de jogos carregado do banco de dados.');
     for (const steamId of STEAM_IDS_ARRAY) {
@@ -903,7 +895,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: monitoramento apenas dos 3 jogos recentes!');
+    await dono.send('🚀 Bot online! Logs mostram os 3 jogos recentes de cada membro.');
   } catch (_) {}
 });
 
