@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO OTIMIZADA
+// BOT STEAM FAMÍLIA - VERSÃO OTIMIZADA E CORRIGIDA
 // ============================================================
 
 require('dotenv').config();
@@ -529,7 +529,7 @@ client.once('ready', async () => {
 });
 
 // ============================================================
-// 12. COMANDOS SLASH
+// 12. COMANDOS SLASH (ATUALIZADO)
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -620,20 +620,41 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /quero-listar
+  // ============================================================
+  // COMANDO /quero-listar (CORRIGIDO)
+  // ============================================================
   if (interaction.commandName === 'quero-listar') {
     await interaction.deferReply({ ephemeral: true });
-    const lista = listarQuero(interaction.user.id);
-    if (!lista.length) {
-      await interaction.editReply('📭 Sua lista /quero está vazia.');
-      return;
+    try {
+      const lista = listarQuero(interaction.user.id);
+      if (!lista.length) {
+        await interaction.editReply('📭 Sua lista /quero está vazia.');
+        return;
+      }
+
+      // Limita a 20 jogos para não estourar o limite do embed
+      const jogosExibir = lista.slice(0, 20);
+      const totalJogos = lista.length;
+
+      // Monta a descrição
+      let descricao = jogosExibir.map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n');
+
+      // Se a descrição ainda for muito longa, truncamos
+      if (descricao.length > 4000) {
+        descricao = descricao.substring(0, 4000) + '\n... (lista truncada)';
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0x00AE86)
+        .setTitle(`📋 Sua lista /quero (${totalJogos} jogos)`)
+        .setDescription(descricao)
+        .setFooter({ text: totalJogos > 20 ? `Mostrando 20 de ${totalJogos}` : '' });
+
+      await interaction.editReply({ embeds: [embed] });
+    } catch (err) {
+      console.error('❌ Erro no /quero-listar:', err);
+      await interaction.editReply('❌ Ocorreu um erro ao listar seus jogos. Tente novamente.');
     }
-    const embed = new EmbedBuilder()
-      .setColor(0x00AE86)
-      .setTitle(`📋 Sua lista /quero (${lista.length} jogos)`)
-      .setDescription(lista.slice(0, 20).map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n'))
-      .setFooter({ text: lista.length > 20 ? `Mostrando 20 de ${lista.length}` : '' });
-    await interaction.editReply({ embeds: [embed] });
   }
 
   // /quero-remover
