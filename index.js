@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM SUPORTE A LINKS E MENSAGENS PERSONALIZADAS
+// BOT STEAM FAMÍLIA - CORREÇÃO DE LANÇAMENTOS E PROMOÇÕES
 // ============================================================
 
 require('dotenv').config();
@@ -233,9 +233,9 @@ function extrairAppIdDaUrl(url) {
 }
 
 // ============================================================
-// 5. FUNÇÕES DE NEGÓCIO (lista /quero)
+// 5. FUNÇÕES DE NEGÓCIO (lista /quero) - CORRIGIDAS
 // ============================================================
-function adicionarQuero(discordId, appid, nome, link) {
+async function adicionarQuero(discordId, appid, nome, link) {
   if (!db.listaQuero[discordId]) db.listaQuero[discordId] = [];
   if (db.listaQuero[discordId].some(j => j.appid === appid)) {
     return { sucesso: false, motivo: 'ja_na_lista' };
@@ -246,9 +246,24 @@ function adicionarQuero(discordId, appid, nome, link) {
       return { sucesso: false, motivo: 'ja_na_familia', dono };
     }
   }
+
+  // 🔥 SALVA O STATUS DE "coming_soon" NO MOMENTO DA ADIÇÃO
+  let comingSoon = null;
+  try {
+    const detalhes = await getGameDetails(appid);
+    if (detalhes && detalhes.release_date) {
+      comingSoon = detalhes.release_date.coming_soon === true;
+    }
+  } catch (_) {
+    comingSoon = null;
+  }
+
   db.listaQuero[discordId].push({
-    appid, nome, link,
-    adicionado_em: new Date().toISOString()
+    appid,
+    nome,
+    link,
+    adicionado_em: new Date().toISOString(),
+    coming_soon: comingSoon // <--- NOVO CAMPO
   });
   salvarDB(db);
   return { sucesso: true };
@@ -403,7 +418,7 @@ async function verificarConquistas(steamId, games, mention, userName) {
 }
 
 // ============================================================
-// 9. VERIFICAÇÃO DE LANÇAMENTOS NA LISTA /QUERO (DM)
+// 9. VERIFICAÇÃO DE LANÇAMENTOS (CORRIGIDA)
 // ============================================================
 async function verificarLancamentosQuero() {
   console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando lançamentos da lista /quero...`);
@@ -421,8 +436,17 @@ async function verificarLancamentosQuero() {
 
     for (const jogo of jogos) {
       const chave = `${discordId}_${jogo.appid}`;
+
+      // Se já notificou este lançamento, pula
       if (db.lancamentosNotificados?.[chave]) continue;
 
+      // Se o jogo foi adicionado com coming_soon: false (já estava disponível), NUNCA notifica lançamento
+      if (jogo.coming_soon === false) {
+        // Não notifica lançamento, apenas promoções
+        continue;
+      }
+
+      // Se coming_soon é true ou null/indefinido, verificamos o estado atual
       const detalhes = await getGameDetails(jogo.appid);
       if (!detalhes) continue;
 
@@ -430,12 +454,13 @@ async function verificarLancamentosQuero() {
       const hasPrice = !!detalhes.price_overview;
       const isAvailable = (isComingSoon === false) && hasPrice;
 
-      if (isAvailable) {
-        console.log(`🎉 ${usuario.username} - ${jogo.nome} AGORA ESTÁ DISPONÍVEL!`);
+      // Só notifica se ANTES estava marcado como coming_soon (true) e AGORA está disponível
+      if (jogo.coming_soon === true && isAvailable) {
+        console.log(`🎉 ${usuario.username} - ${jogo.nome} FOI LANÇADO!`);
 
         const embed = new EmbedBuilder()
           .setColor(0x00FF00)
-          .setTitle(`🎮 ${jogo.nome} AGORA ESTÁ DISPONÍVEL!`)
+          .setTitle(`🎮 ${jogo.nome} FOI LANÇADO!`)
           .setURL(jogo.link)
           .setThumbnail(`https://cdn.cloudflare.steamstatic.com/steam/apps/${jogo.appid}/header.jpg`)
           .addFields(
@@ -450,6 +475,8 @@ async function verificarLancamentosQuero() {
           console.log(`✅ DM de lançamento enviada para ${usuario.username}: ${jogo.nome}`);
           if (!db.lancamentosNotificados) db.lancamentosNotificados = {};
           db.lancamentosNotificados[chave] = Date.now();
+          // Atualiza o campo coming_soon para false, para não notificar novamente
+          jogo.coming_soon = false;
           salvarDB(db);
           await new Promise(r => setTimeout(r, 1000));
         } catch (err) {
@@ -698,7 +725,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online! /quero agora aceita links.');
+    await dono.send('🚀 Bot Steam Família está online! Correção de lançamentos aplicada.');
   } catch (_) {}
 });
 
@@ -759,16 +786,13 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.editReply({ embeds: [gerarRankingEmbed()] });
   }
 
-  // ============================================================
-  // /quero - COM MENSAGEM PERSONALIZADA
-  // ============================================================
+  // /quero (com suporte a links e mensagem personalizada)
   if (interaction.commandName === 'quero') {
     await interaction.deferReply({ ephemeral: true });
     try {
       const input = interaction.options.getString('jogo');
       let info = null;
 
-      // Verifica se é um link da Steam
       if (input.includes('store.steampowered.com/app/')) {
         const appid = extrairAppIdDaUrl(input);
         if (appid) {
@@ -779,24 +803,21 @@ client.on('interactionCreate', async (interaction) => {
               nome: detalhes.name,
               link: `https://store.steampowered.com/app/${appid}`,
               capa: detalhes.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`,
-              detalhes: detalhes // guarda os detalhes para verificar lançamento
+              release_date: detalhes.release_date
             };
           }
         }
       } else {
-        // Busca por nome
-        const busca = await searchGameOnSteam(input);
-        if (busca) {
-          const detalhes = await getGameDetails(busca.appid);
-          if (detalhes) {
-            info = {
-              appid: busca.appid,
-              nome: busca.nome,
-              link: busca.link,
-              capa: busca.capa,
-              detalhes: detalhes
-            };
-          }
+        const searchResult = await searchGameOnSteam(input);
+        if (searchResult) {
+          const detalhes = await getGameDetails(searchResult.appid);
+          info = {
+            appid: searchResult.appid,
+            nome: searchResult.nome,
+            link: searchResult.link,
+            capa: searchResult.capa,
+            release_date: detalhes?.release_date
+          };
         }
       }
 
@@ -815,7 +836,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      const resultado = adicionarQuero(interaction.user.id, info.appid, info.nome, info.link);
+      const resultado = await adicionarQuero(interaction.user.id, info.appid, info.nome, info.link);
       if (!resultado.sucesso) {
         if (resultado.motivo === 'ja_na_lista') {
           await interaction.editReply(`ℹ️ **${info.nome}** já está na sua lista /quero.`);
@@ -825,27 +846,18 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // ============================================================
-      // DETERMINA A MENSAGEM COM BASE NO ESTADO DO JOGO
-      // ============================================================
-      let mensagemNotificacao = '';
-      const detalhes = info.detalhes;
-      if (detalhes) {
-        const isComingSoon = detalhes.release_date?.coming_soon;
-        const hasPrice = !!detalhes.price_overview;
-        const isAvailable = (isComingSoon === false) && hasPrice;
-
-        if (isAvailable) {
-          mensagemNotificacao = '🔔 Você receberá DM assim que este jogo entrar em **PROMOÇÃO**!';
-        } else {
-          mensagemNotificacao = '🔔 Você receberá DM assim que este jogo for **LANÇADO**!';
-        }
+      // Mensagem personalizada baseada no status do jogo
+      let mensagemAdicional = '';
+      const isComingSoon = info.release_date?.coming_soon;
+      const hasPrice = !!info.release_date?.price_overview; // não temos price aqui, mas podemos verificar depois
+      // Para decidir a mensagem, usamos o coming_soon
+      if (isComingSoon === true) {
+        mensagemAdicional = '🔔 Você receberá DM assim que este jogo for **LANÇADO**!';
       } else {
-        // Fallback caso não consiga obter detalhes
-        mensagemNotificacao = '🔔 Você receberá DM quando este jogo for lançado ou entrar em promoção!';
+        mensagemAdicional = '🔔 Você receberá DM assim que este jogo entrar em **PROMOÇÃO**!';
       }
 
-      await interaction.editReply(`✅ **${info.nome}** adicionado à sua lista /quero!\n🔗 ${info.link}\n${mensagemNotificacao}`);
+      await interaction.editReply(`✅ **${info.nome}** adicionado à sua lista /quero!\n🔗 ${info.link}\n${mensagemAdicional}`);
     } catch (err) {
       console.error('❌ Erro no /quero:', err);
       await interaction.editReply(`❌ Erro ao adicionar o jogo: ${err.message}`);
