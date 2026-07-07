@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO CORRIGIDA (FINAL)
+// BOT STEAM FAMÍLIA - COM NOTIFICAÇÃO DE PROMOÇÕES NA DM
 // ============================================================
 
 require('dotenv').config();
@@ -67,6 +67,7 @@ function carregarDB() {
       if (!parsed.listaQuero) parsed.listaQuero = {};
       if (!parsed.historicoJogos) parsed.historicoJogos = {};
       if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
+      if (!parsed.promocoesNotificadas) parsed.promocoesNotificadas = {}; // { discordId_appid: timestamp }
       return parsed;
     } else {
       console.log(`ℹ️ DB não encontrado em ${DB_FILE}, criando novo...`);
@@ -82,7 +83,8 @@ function carregarDB() {
     conquistas: {},
     listaQuero: {},
     historicoJogos: {},
-    ultimaMensagemRankingId: null
+    ultimaMensagemRankingId: null,
+    promocoesNotificadas: {}
   };
 }
 
@@ -198,13 +200,38 @@ async function searchGameOnSteam(query) {
   return null;
 }
 
+async function getPriceOverview(appId) {
+  try {
+    const resp = await axios.get(
+      `https://store.steampowered.com/api/appdetails?appids=${appId}&cc=br`,
+      { timeout: 10000 }
+    );
+    if (resp.data && resp.data[appId]?.success) {
+      const game = resp.data[appId].data;
+      const price = game.price_overview;
+      if (price) {
+        return {
+          nome: game.name,
+          appid: appId,
+          link: `https://store.steampowered.com/app/${appId}`,
+          precoAtual: price.final_formatted,
+          precoAntigo: price.initial_formatted,
+          emPromocao: price.final < price.initial,
+          desconto: price.discount_percent || 0
+        };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 function extrairAppIdDaUrl(url) {
   const match = url.match(/store\.steampowered\.com\/app\/(\d+)/);
   return match ? parseInt(match[1]) : null;
 }
 
 // ============================================================
-// 5. FUNÇÕES DE NEGÓCIO (lista /quero)
+// 5. FUNÇÕES DE NEGÓCIO (lista /quero e promoções)
 // ============================================================
 function adicionarQuero(discordId, appid, nome, link) {
   if (!db.listaQuero[discordId]) db.listaQuero[discordId] = [];
@@ -374,7 +401,75 @@ async function verificarConquistas(steamId, games, mention, userName) {
 }
 
 // ============================================================
-// 9. VERIFICAÇÃO DE NOVOS JOGOS
+// 9. VERIFICAÇÃO DE PROMOÇÕES NA LISTA /QUERO (DM)
+// ============================================================
+async function verificarPromocoesQuero() {
+  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando promoções da lista /quero...`);
+
+  const agora = Date.now();
+  const UM_DIA = 86400000; // 24 horas em ms
+
+  // Percorre cada usuário que tem lista /quero
+  for (const [discordId, jogos] of Object.entries(db.listaQuero || {})) {
+    if (!jogos || jogos.length === 0) continue;
+
+    let usuario;
+    try {
+      usuario = await client.users.fetch(discordId);
+    } catch (_) {
+      console.warn(`⚠️ Não foi possível buscar o usuário ${discordId}`);
+      continue;
+    }
+
+    for (const jogo of jogos) {
+      const chave = `${discordId}_${jogo.appid}`;
+      const ultimaNotif = db.promocoesNotificadas?.[chave] || 0;
+
+      // Se já notificou nas últimas 24h, pula
+      if (agora - ultimaNotif < UM_DIA) continue;
+
+      const preco = await getPriceOverview(jogo.appid);
+      if (!preco) continue;
+
+      // Se estiver em promoção
+      if (preco.emPromocao && preco.desconto > 0) {
+        console.log(`🎉 ${usuario.username} - ${jogo.nome} está em promoção (${preco.desconto}% OFF)!`);
+
+        const embed = new EmbedBuilder()
+          .setColor(0x00FF00)
+          .setTitle(`🎉 ${jogo.nome} está em promoção!`)
+          .setURL(jogo.link)
+          .setThumbnail(`https://cdn.cloudflare.steamstatic.com/steam/apps/${jogo.appid}/header.jpg`)
+          .addFields(
+            { name: '💰 Preço antigo', value: `~~${preco.precoAntigo}~~`, inline: true },
+            { name: '💰 Preço atual', value: `**${preco.precoAtual}**`, inline: true },
+            { name: '📉 Desconto', value: `**${preco.desconto}% OFF**`, inline: true },
+            { name: '🔗 Link', value: `[Comprar na Steam](${preco.link})`, inline: false }
+          )
+          .setFooter({ text: 'Steam Família - Promoções /quero' })
+          .setTimestamp();
+
+        try {
+          await usuario.send({ embeds: [embed] });
+          console.log(`✅ DM enviada para ${usuario.username}: ${jogo.nome} em promoção`);
+
+          // Marca como notificada
+          if (!db.promocoesNotificadas) db.promocoesNotificadas = {};
+          db.promocoesNotificadas[chave] = agora;
+          salvarDB(db);
+
+          // Pequena pausa para não sobrecarregar
+          await new Promise(r => setTimeout(r, 1000));
+        } catch (err) {
+          console.error(`❌ Erro ao enviar DM para ${usuario.username}:`, err.message);
+        }
+      }
+    }
+  }
+}
+
+// ============================================================
+// 10. VERIFICAÇÃO DE NOVOS JOGOS
 // ============================================================
 async function checkSteamGames() {
   const inicio = Date.now();
@@ -436,6 +531,7 @@ async function checkSteamGames() {
             await enviarRanking();
           }
 
+          // Remove da lista /quero de quem tinha e envia DM
           for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
             if (!jogos) continue;
             for (const j of jogos) {
@@ -469,7 +565,7 @@ async function checkSteamGames() {
 }
 
 // ============================================================
-// 10. REGISTRO DE COMANDOS SLASH
+// 11. REGISTRO DE COMANDOS SLASH
 // ============================================================
 async function registrarComandos() {
   try {
@@ -518,7 +614,7 @@ async function registrarComandos() {
 }
 
 // ============================================================
-// 11. EVENTOS
+// 12. EVENTOS
 // ============================================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -540,16 +636,21 @@ client.once('ready', async () => {
 
   await checkSteamGames();
   setInterval(checkSteamGames, 15000);
-  console.log(`🔄 Monitorando a cada 15 segundos`);
+  console.log(`🔄 Monitorando jogos a cada 15 segundos`);
+
+  // Verificação de promoções a cada 12 horas
+  await verificarPromocoesQuero();
+  setInterval(verificarPromocoesQuero, 12 * 60 * 60 * 1000);
+  console.log(`🔄 Verificando promoções da lista /quero a cada 12 horas`);
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online!');
+    await dono.send('🚀 Bot Steam Família está online! Promoções da lista /quero ativadas.');
   } catch (_) {}
 });
 
 // ============================================================
-// 12. COMANDOS SLASH (TODOS CORRIGIDOS)
+// 13. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -632,15 +733,13 @@ client.on('interactionCreate', async (interaction) => {
         }
         return;
       }
-      await interaction.editReply(`✅ **${info.nome}** adicionado à sua lista /quero!\n🔗 ${info.link}`);
+      await interaction.editReply(`✅ **${info.nome}** adicionado à sua lista /quero!\n🔗 ${info.link}\n🔔 Você receberá DM quando este jogo entrar em promoção!`);
     } catch (err) {
       await interaction.editReply(`❌ Erro: ${err.message}`);
     }
   }
 
-  // ============================================================
-  // /quero-listar (CORRIGIDO - SEM ERRO DE FOOTER)
-  // ============================================================
+  // /quero-listar (CORRIGIDO)
   if (interaction.commandName === 'quero-listar') {
     await interaction.deferReply({ ephemeral: true });
     try {
@@ -672,7 +771,6 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle(`📋 Sua lista /quero (${totalJogos} jogos)`)
         .setDescription(descricao);
 
-      // SÓ ADICIONA FOOTER SE HOUVER TEXTO
       if (totalJogos > 10) {
         embed.setFooter({ text: `Mostrando 10 de ${totalJogos}` });
       }
@@ -680,7 +778,6 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
       console.error('❌ Erro no /quero-listar:', err);
-      // Fallback para texto simples
       try {
         const lista = listarQuero(interaction.user.id);
         if (lista && lista.length) {
@@ -731,7 +828,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 13. !resetranking
+// 14. !resetranking
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.author.id !== DONO_ID) return;
@@ -757,7 +854,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // ============================================================
-// 14. HEALTH CHECK
+// 15. HEALTH CHECK
 // ============================================================
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -766,7 +863,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => console.log(`✅ Health check na porta ${PORT}`));
 
 // ============================================================
-// 15. LOGIN
+// 16. LOGIN
 // ============================================================
 client.login(DISCORD_TOKEN)
   .then(() => console.log('✅ Login bem-sucedido!'))
