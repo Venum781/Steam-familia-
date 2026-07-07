@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COM PERSISTÊNCIA NO VOLUME /data
+// BOT STEAM FAMÍLIA - VERSÃO CORRIGIDA (FINAL)
 // ============================================================
 
 require('dotenv').config();
@@ -10,7 +10,7 @@ const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('discord.js');
 
 // ============================================================
-// 1. VARIÁVEIS DE AMBIENTE (todas obrigatórias)
+// 1. VARIÁVEIS DE AMBIENTE
 // ============================================================
 const {
   DISCORD_TOKEN,
@@ -20,11 +20,10 @@ const {
   RANKING_CHANNEL_ID,
   ACHIEVEMENT_CHANNEL_ID,
   DONO_ID,
-  DATA_DIR = '/data',   // <--- ALTERADO PARA /data (volume persistente)
+  DATA_DIR = '/data',
   PORT = 3000
 } = process.env;
 
-// Validação básica
 if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID) {
   console.error('❌ Variáveis obrigatórias ausentes:');
   console.error('  DISCORD_TOKEN, STEAM_KEY, STEAM_IDS, CHANNEL_ID');
@@ -34,7 +33,7 @@ if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID) {
 const STEAM_IDS_ARRAY = STEAM_IDS.split(',').map(id => id.trim());
 
 // ============================================================
-// 2. MAPEAMENTO DOS MEMBROS (ajuste conforme sua família)
+// 2. MAPEAMENTO DOS MEMBROS
 // ============================================================
 const MEMBROS = {
   '76561198127320557': { nome: 'Gardemi', discordId: '663789211152941065' },
@@ -45,7 +44,7 @@ const MEMBROS = {
 };
 
 // ============================================================
-// 3. BANCO DE DADOS PERSISTENTE (JSON)
+// 3. BANCO DE DADOS PERSISTENTE
 // ============================================================
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -63,7 +62,6 @@ function carregarDB() {
       const raw = fs.readFileSync(DB_FILE, 'utf8');
       const parsed = JSON.parse(raw);
       console.log(`✅ DB carregado de ${DB_FILE}`);
-      // Garante que todas as chaves existam
       if (!parsed.ranking) parsed.ranking = {};
       if (!parsed.conquistas) parsed.conquistas = {};
       if (!parsed.listaQuero) parsed.listaQuero = {};
@@ -74,7 +72,7 @@ function carregarDB() {
       console.log(`ℹ️ DB não encontrado em ${DB_FILE}, criando novo...`);
     }
   } catch (e) {
-    console.warn('⚠️ Banco corrompido, criando backup e resetando...', e);
+    console.warn('⚠️ Banco corrompido, criando backup...', e);
     if (fs.existsSync(DB_FILE)) {
       fs.copyFileSync(DB_FILE, `${DB_FILE}.backup_${Date.now()}`);
     }
@@ -100,7 +98,6 @@ function salvarDB(db) {
 
 let db = carregarDB();
 
-// Inicializa ranking se vazio
 if (!db.ranking || Object.keys(db.ranking).length === 0) {
   console.log('📊 Inicializando ranking...');
   db.ranking = {};
@@ -116,7 +113,7 @@ if (!db.ranking || Object.keys(db.ranking).length === 0) {
 }
 
 // ============================================================
-// 4. FUNÇÕES DA STEAM API (com rate limit e retry)
+// 4. FUNÇÕES DA STEAM API
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -214,7 +211,6 @@ function adicionarQuero(discordId, appid, nome, link) {
   if (db.listaQuero[discordId].some(j => j.appid === appid)) {
     return { sucesso: false, motivo: 'ja_na_lista' };
   }
-  // Verifica se já está na família (usando histórico)
   for (const sid of STEAM_IDS_ARRAY) {
     if ((db.historicoJogos[sid] || []).includes(appid)) {
       const dono = MEMBROS[sid]?.nome || sid;
@@ -302,7 +298,7 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS (apenas novas)
+// 8. VERIFICAÇÃO DE CONQUISTAS
 // ============================================================
 async function verificarConquistas(steamId, games, mention, userName) {
   if (!games?.length) return;
@@ -434,14 +430,12 @@ async function checkSteamGames() {
           if (detalhes?.header_image) embed.setImage(detalhes.header_image);
           await channelNotificacoes.send({ content: mention, embeds: [embed] });
 
-          // Atualiza ranking
           if (db.ranking[steamId]) {
             db.ranking[steamId].jogos += 1;
             salvarDB(db);
             await enviarRanking();
           }
 
-          // Remove da lista /quero de quem tinha
           for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
             if (!jogos) continue;
             for (const j of jogos) {
@@ -467,7 +461,7 @@ async function checkSteamGames() {
 
   if (!primeiraVerificacaoConcluida) {
     primeiraVerificacaoConcluida = true;
-    console.log('✅ PRIMEIRA VERIFICAÇÃO CONCLUÍDA! Monitorando novas conquistas e jogos.');
+    console.log('✅ PRIMEIRA VERIFICAÇÃO CONCLUÍDA!');
   }
 
   const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
@@ -532,7 +526,6 @@ client.once('ready', async () => {
   await registrarComandos();
   await enviarRanking();
 
-  // Inicializa histórico se vazio
   if (!db.historicoJogos || Object.keys(db.historicoJogos).length === 0) {
     console.log('🔄 Inicializando histórico de jogos...');
     for (const steamId of STEAM_IDS_ARRAY) {
@@ -556,7 +549,7 @@ client.once('ready', async () => {
 });
 
 // ============================================================
-// 12. COMANDOS SLASH
+// 12. COMANDOS SLASH (TODOS CORRIGIDOS)
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -580,7 +573,6 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply(`❌ Não encontrei **${input}** na Steam.`);
         return;
       }
-      // Verifica donos
       const donos = [];
       for (const sid of STEAM_IDS_ARRAY) {
         if ((db.historicoJogos[sid] || []).includes(info.appid)) {
@@ -623,7 +615,6 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply(`❌ Não encontrei **${nome}** na Steam.`);
         return;
       }
-      // Verifica se o usuário já tem o jogo
       let userSteamId = null;
       for (const [sid, m] of Object.entries(MEMBROS)) {
         if (m.discordId === interaction.user.id) { userSteamId = sid; break; }
@@ -647,20 +638,31 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /quero-listar (CORRIGIDO)
+  // ============================================================
+  // /quero-listar (CORRIGIDO - SEM ERRO DE FOOTER)
+  // ============================================================
   if (interaction.commandName === 'quero-listar') {
     await interaction.deferReply({ ephemeral: true });
     try {
       const lista = listarQuero(interaction.user.id);
-      if (!lista.length) {
+      if (!lista || !Array.isArray(lista) || lista.length === 0) {
         await interaction.editReply('📭 Sua lista /quero está vazia.');
         return;
       }
 
-      const jogosExibir = lista.slice(0, 20);
+      const jogosExibir = lista.slice(0, 10);
       const totalJogos = lista.length;
 
-      let descricao = jogosExibir.map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n');
+      let descricao = jogosExibir
+        .filter(j => j && j.nome && j.link)
+        .map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`)
+        .join('\n');
+
+      if (!descricao) {
+        await interaction.editReply('📭 Sua lista /quero contém dados inválidos.');
+        return;
+      }
+
       if (descricao.length > 4000) {
         descricao = descricao.substring(0, 4000) + '\n... (lista truncada)';
       }
@@ -668,13 +670,28 @@ client.on('interactionCreate', async (interaction) => {
       const embed = new EmbedBuilder()
         .setColor(0x00AE86)
         .setTitle(`📋 Sua lista /quero (${totalJogos} jogos)`)
-        .setDescription(descricao)
-        .setFooter({ text: totalJogos > 20 ? `Mostrando 20 de ${totalJogos}` : '' });
+        .setDescription(descricao);
+
+      // SÓ ADICIONA FOOTER SE HOUVER TEXTO
+      if (totalJogos > 10) {
+        embed.setFooter({ text: `Mostrando 10 de ${totalJogos}` });
+      }
 
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
       console.error('❌ Erro no /quero-listar:', err);
-      await interaction.editReply('❌ Ocorreu um erro ao listar seus jogos. Tente novamente.');
+      // Fallback para texto simples
+      try {
+        const lista = listarQuero(interaction.user.id);
+        if (lista && lista.length) {
+          const texto = lista.map((j, i) => `${i+1}. ${j.nome} - ${j.link}`).join('\n');
+          await interaction.editReply(`📋 **Sua lista /quero (${lista.length} jogos)**\n\`\`\`\n${texto.substring(0, 1900)}\n\`\`\``);
+        } else {
+          await interaction.editReply('❌ Erro ao listar. Tente novamente.');
+        }
+      } catch (_) {
+        await interaction.editReply('❌ Erro ao listar seus jogos. Tente novamente.');
+      }
     }
   }
 
@@ -714,7 +731,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 13. COMANDO !resetranking (apenas dono)
+// 13. !resetranking
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.author.id !== DONO_ID) return;
@@ -758,6 +775,5 @@ client.login(DISCORD_TOKEN)
     process.exit(1);
   });
 
-// Salva DB ao sair
 process.on('SIGTERM', () => { salvarDB(db); process.exit(0); });
 process.on('SIGINT', () => { salvarDB(db); process.exit(0); });
