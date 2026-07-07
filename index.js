@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO FINAL COMPLETA
+// BOT STEAM FAMÍLIA - COM LISTA DE JOGOS INCOMPATÍVEIS
 // ============================================================
 
 require('dotenv').config();
@@ -251,8 +251,54 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
+// 🔥 LISTA DE JOGOS INCOMPATÍVEIS COM FAMILY SHARING
+const JOGOS_INCOMPATIVEIS = {
+  33930: "Arma 2: Operation Arrowhead",
+  107410: "Arma 3",
+  582660: "Black Desert",
+  1097150: "Fall Guys",
+  220240: "Far Cry 3",
+  298110: "Far Cry 4",
+  552520: "Far Cry 5",
+  304390: "FOR HONOR",
+  1546970: "Grand Theft Auto III – The Definitive Edition",
+  12210: "Grand Theft Auto IV: The Complete Edition",
+  3240220: "Grand Theft Auto V Enhanced",
+  271590: "Grand Theft Auto V Legacy",
+  1547000: "Grand Theft Auto: San Andreas – The Definitive Edition",
+  1546990: "Grand Theft Auto: Vice City – The Definitive Edition",
+  439700: "H1Z1: King of the Kill Test Server",
+  269210: "Hero Siege",
+  1426210: "It Takes Two",
+  510190: "Lazarus",
+  1392860: "Little Nightmares III",
+  1328670: "Mass Effect Legendary Edition",
+  204100: "Max Payne 3",
+  555160: "Pavlov VR",
+  2129530: "REANIMAL",
+  1174180: "Red Dead Redemption 2",
+  2215260: "Scott Pilgrim vs. The World: The Game – Complete Edition",
+  488790: "South Park: The Fractured But Whole",
+  2001120: "Split Fiction",
+  1172380: "STAR WARS Jedi: Fallen Order",
+  1774580: "STAR WARS Jedi: Survivor",
+  1527280: "Starship Tunnel",
+  470220: "UNO",
+  447040: "Watch Dogs 2",
+  1222700: "A Way Out"
+};
+
 // 🔥 FUNÇÃO PARA VERIFICAR COMPATIBILIDADE COM FAMILY SHARING
 async function verificarCompatibilidadeFamilia(appId) {
+  // 1. Verifica na lista manual
+  if (JOGOS_INCOMPATIVEIS[appId]) {
+    return {
+      compatível: false,
+      motivo: `Este jogo (${JOGOS_INCOMPATIVEIS[appId]}) NÃO é compatível com Family Sharing (lista conhecida)`
+    };
+  }
+
+  // 2. Verifica via API
   try {
     const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&l=portuguese`;
     const resp = await axios.get(url, { timeout: 10000 });
@@ -277,6 +323,7 @@ async function verificarCompatibilidadeFamilia(appId) {
     console.error(`❌ Erro ao verificar compatibilidade do jogo ${appId}:`, e.message);
   }
   
+  // Fallback: assume compatível se não estiver na lista e não houver erro
   return { compatível: true, motivo: null };
 }
 
@@ -650,7 +697,7 @@ async function checkSteamGames() {
           const nome = game.name || `App ${appid}`;
           const link = `https://store.steampowered.com/app/${appid}`;
 
-          // 🔥 VERIFICA COMPATIBILIDADE
+          // 🔥 VERIFICA COMPATIBILIDADE (USANDO A LISTA)
           const compat = await verificarCompatibilidadeFamilia(appid);
 
           // 🔥 SÓ ANUNCIA SE FOR COMPATÍVEL
@@ -821,7 +868,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot Steam Família está online! @everyone ativado para jogos compatíveis.');
+    await dono.send('🚀 Bot Steam Família está online! Lista de jogos incompatíveis adicionada.');
   } catch (_) {}
 });
 
@@ -831,7 +878,7 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  // /tem (COM COMPATIBILIDADE NA DESCRIÇÃO - SEM CAMPO SEPARADO)
+  // /tem (COM COMPATIBILIDADE NA DESCRIÇÃO - USANDO A LISTA)
   if (interaction.commandName === 'tem') {
     await interaction.deferReply({ ephemeral: true });
     try {
@@ -851,6 +898,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      // 🔥 VERIFICA COMPATIBILIDADE (COM A LISTA)
       const compat = await verificarCompatibilidadeFamilia(info.appid);
 
       const donos = [];
@@ -877,7 +925,7 @@ client.on('interactionCreate', async (interaction) => {
         descricao = '😕 **Nenhum membro da família possui este jogo.**';
       }
 
-      // 🔥 ADICIONA A COMPATIBILIDADE DIRETAMENTE NA DESCRIÇÃO (SEM CAMPO SEPARADO)
+      // 🔥 ADICIONA A COMPATIBILIDADE DIRETAMENTE NA DESCRIÇÃO
       if (compat.compatível) {
         descricao += '\n✅ **Compatível com Família Steam!**';
       } else {
