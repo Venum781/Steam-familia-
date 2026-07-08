@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - DETECÇÃO DO JOGO ATUAL + 5 RECENTES
+// BOT STEAM FAMÍLIA - OTIMIZADO (CONQUISTAS 30s, NOVOS JOGOS 5min)
 // ============================================================
 
 require('dotenv').config();
@@ -155,7 +155,7 @@ async function getOwnedGames(steamId) {
   return data?.response?.games || [];
 }
 
-async function getRecentlyPlayedGames(steamId, limit = 5) {
+async function getRecentlyPlayedGames(steamId, limit = 3) {
   const data = await fetchSteam(
     'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/',
     { steamid: steamId, count: limit, format: 'json' }
@@ -227,7 +227,7 @@ async function getPriceOverview(appId) {
   return null;
 }
 
-// 🔥 FUNÇÃO PARA DETECTAR O JOGO ATUAL
+// 🔥 DETECTA O JOGO ATUAL
 async function getCurrentGame(steamId) {
   try {
     const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/`;
@@ -474,14 +474,15 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
 
   if (!db.conquistas[steamId]) db.conquistas[steamId] = {};
 
-  // Filtra jogos marcados como sem conquistas
   const jogosParaVerificar = gamesToCheck.filter(g => !db.jogosSemConquistas || !db.jogosSemConquistas[g.appid]);
 
   if (jogosParaVerificar.length === 0) {
     return;
   }
 
-  console.log(`🏆 ${userName}: verificando ${jogosParaVerificar.length} jogos para novas conquistas...`);
+  // 🔥 LOG DE QUAIS JOGOS ESTÃO SENDO VERIFICADOS PARA CONQUISTAS
+  const nomesJogos = jogosParaVerificar.map(g => g.name || g.appid).join(', ');
+  console.log(`🏆 ${userName}: verificando conquistas em: ${nomesJogos}`);
 
   let novasConquistas = 0;
 
@@ -700,11 +701,11 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM JOGO ATUAL E 5 RECENTES)
+// 11. VERIFICAÇÃO DE NOVOS JOGOS (apenas compras, a cada 5 min)
 // ============================================================
-async function checkSteamGames() {
+async function checkNewGames() {
   const inicio = Date.now();
-  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando...`);
+  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando novos jogos...`);
 
   const channelNotificacoes = client.channels.cache.get(CHANNEL_ID);
   if (!channelNotificacoes) {
@@ -726,48 +727,6 @@ async function checkSteamGames() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      // 🔥 1. Tenta detectar o jogo atual
-      const currentGame = await getCurrentGame(steamId);
-
-      // 🔥 2. Busca 5 jogos recentes
-      let recentGames = await getRecentlyPlayedGames(steamId, 5);
-
-      // 🔥 3. Constrói a lista de jogos a verificar (priorizando o jogo atual)
-      let gamesToCheck = [];
-
-      if (currentGame) {
-        // Se houver jogo atual, coloca ele em primeiro lugar
-        const jaExiste = recentGames.some(g => g.appid === currentGame.appid);
-        const currentGameObj = {
-          appid: currentGame.appid,
-          name: currentGame.name,
-          rtime_last_played: Date.now() / 1000
-        };
-
-        if (jaExiste) {
-          // Remove da lista de recentes para não duplicar
-          recentGames = recentGames.filter(g => g.appid !== currentGame.appid);
-        }
-
-        // Monta a lista final: jogo atual + 4 primeiros recentes (total 5)
-        gamesToCheck = [currentGameObj, ...recentGames.slice(0, 4)];
-      } else {
-        // Sem jogo atual, usa os 5 recentes
-        gamesToCheck = recentGames.slice(0, 5);
-      }
-
-      // 🔥 4. Log detalhado com posições e indicador de jogo atual
-      const listaComPosicao = gamesToCheck.map((g, i) => {
-        const isCurrent = currentGame && g.appid === currentGame.appid;
-        return `${i+1}º: ${g.name || g.appid}${isCurrent ? ' 🟢' : ''}`;
-      }).join(' | ');
-
-      console.log(`📋 ${userName}: jogos a monitorar -> ${listaComPosicao}`);
-
-      // 🔥 5. Verifica conquistas nos jogos da lista
-      await verificarConquistas(steamId, gamesToCheck, mention, userName);
-
-      // 🔥 6. Monitoramento de novos jogos (para notificar compras)
       if (!previousGames[steamId]) {
         previousGames[steamId] = allGames.map(g => ({ name: g.name, appid: g.appid, rtime_last_played: g.rtime_last_played || 0 }));
         console.log(`📊 ${userName}: ${allGames.length} jogos (histórico inicial salvo)`);
@@ -813,6 +772,7 @@ async function checkSteamGames() {
               await enviarRanking();
             }
 
+            // Remove da lista /quero de quem tinha
             for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
               if (!jogos) continue;
               for (const j of jogos) {
@@ -839,17 +799,76 @@ async function checkSteamGames() {
     }
   }
 
-  if (!primeiraVerificacaoConcluida) {
-    primeiraVerificacaoConcluida = true;
-    console.log('✅ PRIMEIRA VERIFICAÇÃO CONCLUÍDA!');
-  }
-
   const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
-  console.log(`✅ Verificação concluída em ${duracao}s`);
+  console.log(`✅ Verificação de novos jogos concluída em ${duracao}s`);
 }
 
 // ============================================================
-// 12. REGISTRO DE COMANDOS SLASH
+// 12. VERIFICAÇÃO DE CONQUISTAS (a cada 30s)
+// ============================================================
+async function checkAchievements() {
+  const inicio = Date.now();
+  console.log(`🔄 [${new Date().toLocaleTimeString()}] Verificando conquistas...`);
+
+  for (const steamId of STEAM_IDS_ARRAY) {
+    try {
+      const member = MEMBROS[steamId];
+      if (!member) {
+        console.warn(`⚠️ Steam ID ${steamId} não mapeado`);
+        continue;
+      }
+      const userName = member.nome;
+      const discordId = member.discordId;
+      const mention = `<@${discordId}>`;
+
+      // 🔥 DETECTA JOGO ATUAL
+      const currentGame = await getCurrentGame(steamId);
+
+      // 🔥 BUSCA 3 JOGOS RECENTES
+      let recentGames = await getRecentlyPlayedGames(steamId, 3);
+
+      // 🔥 MONTA LISTA DE JOGOS A VERIFICAR (priorizando o jogo atual)
+      let gamesToCheck = [];
+
+      if (currentGame) {
+        const jaExiste = recentGames.some(g => g.appid === currentGame.appid);
+        const currentGameObj = {
+          appid: currentGame.appid,
+          name: currentGame.name,
+          rtime_last_played: Date.now() / 1000
+        };
+
+        if (jaExiste) {
+          recentGames = recentGames.filter(g => g.appid !== currentGame.appid);
+        }
+
+        // Jogo atual + 2 primeiros recentes (total 3)
+        gamesToCheck = [currentGameObj, ...recentGames.slice(0, 2)];
+      } else {
+        gamesToCheck = recentGames.slice(0, 3);
+      }
+
+      // 🔥 LOG DE POSIÇÃO E JOGO ATUAL
+      const listaComPosicao = gamesToCheck.map((g, i) => {
+        const isCurrent = currentGame && g.appid === currentGame.appid;
+        return `${i+1}º: ${g.name || g.appid}${isCurrent ? ' 🟢' : ''}`;
+      }).join(' | ');
+      console.log(`📋 ${userName}: jogos a monitorar -> ${listaComPosicao}`);
+
+      // 🔥 VERIFICA CONQUISTAS
+      await verificarConquistas(steamId, gamesToCheck, mention, userName);
+
+    } catch (err) {
+      console.error(`❌ Erro em ${steamId}:`, err.message);
+    }
+  }
+
+  const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
+  console.log(`✅ Verificação de conquistas concluída em ${duracao}s`);
+}
+
+// ============================================================
+// 13. REGISTRO DE COMANDOS SLASH
 // ============================================================
 async function registrarComandos() {
   try {
@@ -901,7 +920,7 @@ async function registrarComandos() {
 }
 
 // ============================================================
-// 13. EVENTOS
+// 14. EVENTOS
 // ============================================================
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -939,10 +958,18 @@ client.once('ready', async () => {
     salvarDB(db);
   }
 
-  await checkSteamGames();
-  setInterval(checkSteamGames, 15000);
-  console.log(`🔄 Monitorando jogos a cada 15 segundos`);
+  // 🔥 PRIMEIRA VERIFICAÇÃO
+  await checkNewGames();
+  await checkAchievements();
 
+  // 🔥 TAREFAS PERIÓDICAS
+  setInterval(checkNewGames, 5 * 60 * 1000); // 5 minutos
+  setInterval(checkAchievements, 30 * 1000); // 30 segundos
+
+  console.log(`🔄 Verificando novos jogos a cada 5 minutos`);
+  console.log(`🔄 Verificando conquistas a cada 30 segundos`);
+
+  // Promoções e lançamentos (já existentes)
   await verificarLancamentosQuero();
   setInterval(verificarLancamentosQuero, 5 * 60 * 1000);
   console.log(`🔄 Verificando lançamentos a cada 5 minutos`);
@@ -953,12 +980,12 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: detecção do jogo atual + 5 jogos recentes!');
+    await dono.send('🚀 Bot otimizado: conquistas a cada 30s, novos jogos a cada 5min.');
   } catch (_) {}
 });
 
 // ============================================================
-// 14. COMANDOS SLASH
+// 15. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -1193,7 +1220,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 15. !resetranking
+// 16. !resetranking
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.author.id !== DONO_ID) return;
@@ -1219,7 +1246,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // ============================================================
-// 16. HEALTH CHECK
+// 17. HEALTH CHECK
 // ============================================================
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1228,7 +1255,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => console.log(`✅ Health check na porta ${PORT}`));
 
 // ============================================================
-// 17. LOGIN
+// 18. LOGIN
 // ============================================================
 client.login(DISCORD_TOKEN)
   .then(() => console.log('✅ Login bem-sucedido!'))
