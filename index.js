@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - DETECÇÃO AUTOMÁTICA DE JOGOS EA
+// BOT STEAM FAMÍLIA - PROGRESSO INCREMENTAL NAS CONQUISTAS
 // ============================================================
 
 require('dotenv').config();
@@ -490,7 +490,7 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS
+// 8. VERIFICAÇÃO DE CONQUISTAS (COM PROGRESSO INCREMENTAL)
 // ============================================================
 async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   if (!gamesToCheck?.length) return;
@@ -553,17 +553,21 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
     }
 
     const anterior = db.conquistas[steamId][appid];
+    const totalAntigo = anterior.total || 0;
     const antigos = anterior.nomes || [];
     const novas = desbloqueadas.filter(c => !antigos.includes(c.apiname));
     if (novas.length === 0) continue;
 
     novasConquistas += novas.length;
     const faltam = totalJogo - total;
-    const progresso = `${total}/${totalJogo}`;
 
-    console.log(`   🆕 ${userName}: ${novas.length} nova(s) conquista(s) em ${gameName}!`);
-
+    // 🔥 PROGRESSO INCREMENTAL
+    let contador = 0;
     for (const ach of novas) {
+      contador++;
+      const progressoAtual = totalAntigo + contador;
+      const progresso = `${progressoAtual}/${totalJogo}`;
+
       const nomeBonito = await getAchievementDisplayName(appid, ach.apiname);
       const embed = new EmbedBuilder()
         .setColor(0xFFD700)
@@ -572,16 +576,17 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
         .addFields(
           { name: '🎮 Jogo', value: gameName, inline: true },
           { name: '👤 Jogador', value: mention, inline: true },
-          { name: '📊 Progresso', value: `${progresso} ${faltam > 0 ? `(faltam ${faltam})` : '🎉 COMPLETO!'}`, inline: true }
+          { name: '📊 Progresso', value: `${progresso} ${faltam > 0 ? `(faltam ${faltam - (contador - 1)})` : '🎉 COMPLETO!'}`, inline: true }
         )
         .setFooter({ text: `+${novas.length} nova(s) conquista(s)` })
         .setTimestamp();
       const detalhes = await getGameDetails(appid);
       if (detalhes?.header_image) embed.setThumbnail(detalhes.header_image);
       await channel.send({ embeds: [embed] });
-      console.log(`      ✅ Notificação enviada: ${nomeBonito}`);
+      console.log(`      ✅ Notificação enviada: ${nomeBonito} (${progresso})`);
     }
 
+    // Atualiza estado
     db.conquistas[steamId][appid] = {
       total,
       nomes: desbloqueadas.map(c => c.apiname),
@@ -767,7 +772,6 @@ async function checkNewGames() {
           const nome = game.name || `App ${appid}`;
           const link = `https://store.steampowered.com/app/${appid}`;
 
-          // 🔥 VERIFICA COMPATIBILIDADE (AGORA DETECTA EA AUTOMATICAMENTE)
           const compat = await verificarCompatibilidadeFamilia(appid);
 
           if (compat.compatível) {
@@ -842,7 +846,6 @@ async function checkAchievements() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      // Busca jogo atual
       const currentGame = await getCurrentGame(steamId);
       let recentGames = await getRecentlyPlayedGames(steamId, 3);
 
@@ -971,12 +974,11 @@ client.once('ready', async () => {
     salvarDB(db);
   }
 
-  // Inicia as duas tarefas separadas
   await checkAchievements();
-  setInterval(checkAchievements, 30000); // Conquistas a cada 30 segundos
+  setInterval(checkAchievements, 30000);
 
   await checkNewGames();
-  setInterval(checkNewGames, 300000); // Novos jogos a cada 5 minutos
+  setInterval(checkNewGames, 300000);
 
   await verificarLancamentosQuero();
   setInterval(verificarLancamentosQuero, 5 * 60 * 1000);
@@ -989,7 +991,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: detecção automática de jogos EA + verificações separadas!');
+    await dono.send('🚀 Bot atualizado: progresso incremental nas conquistas!');
   } catch (_) {}
 });
 
