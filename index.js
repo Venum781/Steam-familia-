@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - OTIMIZADO (CONQUISTAS 30s, NOVOS JOGOS 5min)
+// BOT STEAM FAMÍLIA - DETECÇÃO AUTOMÁTICA DE JOGOS EA
 // ============================================================
 
 require('dotenv').config();
@@ -155,7 +155,7 @@ async function getOwnedGames(steamId) {
   return data?.response?.games || [];
 }
 
-async function getRecentlyPlayedGames(steamId, limit = 3) {
+async function getRecentlyPlayedGames(steamId, limit = 5) {
   const data = await fetchSteam(
     'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/',
     { steamid: steamId, count: limit, format: 'json' }
@@ -227,7 +227,6 @@ async function getPriceOverview(appId) {
   return null;
 }
 
-// 🔥 DETECTA O JOGO ATUAL
 async function getCurrentGame(steamId) {
   try {
     const url = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/`;
@@ -274,6 +273,7 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
+// 🔥 LISTA MANUAL DE JOGOS INCOMPATÍVEIS (FALLBACK)
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
   107410: "Arma 3",
@@ -310,7 +310,9 @@ const JOGOS_INCOMPATIVEIS = {
   1222700: "A Way Out"
 };
 
+// 🔥 FUNÇÃO PARA VERIFICAR COMPATIBILIDADE (COM DETECÇÃO AUTOMÁTICA DE EA)
 async function verificarCompatibilidadeFamilia(appId) {
+  // 1. Verifica na lista manual
   if (JOGOS_INCOMPATIVEIS[appId]) {
     return {
       compatível: false,
@@ -318,21 +320,43 @@ async function verificarCompatibilidadeFamilia(appId) {
     };
   }
 
+  // 2. Busca detalhes do jogo para detectar editor/desenvolvedor
   try {
-    const url = `https://store.steampowered.com/api/appdetails?appids=${appId}&l=portuguese`;
-    const resp = await axios.get(url, { timeout: 10000 });
-    if (resp.data && resp.data[appId]?.success) {
-      const game = resp.data[appId].data;
-      
-      if (game.is_free) {
+    const detalhes = await getGameDetails(appId);
+    if (detalhes) {
+      const publishers = detalhes.publishers || [];
+      const developers = detalhes.developers || [];
+
+      // 3. Detecta jogos da Electronic Arts
+      const isEA = publishers.some(p => 
+        p.toLowerCase().includes('ea ') || 
+        p.toLowerCase().includes('electronic arts') ||
+        p === 'EA' ||
+        p === 'Electronic Arts'
+      ) || developers.some(d => 
+        d.toLowerCase().includes('ea ') || 
+        d.toLowerCase().includes('electronic arts') ||
+        d === 'EA' ||
+        d === 'Electronic Arts'
+      );
+
+      if (isEA) {
+        return {
+          compatível: false,
+          motivo: 'Jogos da Electronic Arts (EA) NÃO são compatíveis com Family Sharing'
+        };
+      }
+
+      // Verifica outras flags
+      if (detalhes.is_free) {
         return { compatível: false, motivo: 'Jogo gratuito não requer Family Sharing' };
       }
       
-      if (game.exclude_from_family_sharing === true) {
+      if (detalhes.exclude_from_family_sharing === true) {
         return { compatível: false, motivo: 'Este jogo NÃO é compatível com Family Sharing' };
       }
       
-      if (!game.price_overview) {
+      if (!detalhes.price_overview) {
         return { compatível: false, motivo: 'Jogo sem preço definido' };
       }
 
@@ -342,6 +366,7 @@ async function verificarCompatibilidadeFamilia(appId) {
     console.error(`❌ Erro ao verificar compatibilidade do jogo ${appId}:`, e.message);
   }
   
+  // Fallback: assume compatível se não estiver na lista e não houver erro
   return { compatível: true, motivo: null };
 }
 
@@ -480,9 +505,7 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
     return;
   }
 
-  // 🔥 LOG DE QUAIS JOGOS ESTÃO SENDO VERIFICADOS PARA CONQUISTAS
-  const nomesJogos = jogosParaVerificar.map(g => g.name || g.appid).join(', ');
-  console.log(`🏆 ${userName}: verificando conquistas em: ${nomesJogos}`);
+  console.log(`🏆 ${userName}: verificando ${jogosParaVerificar.length} jogos para novas conquistas...`);
 
   let novasConquistas = 0;
 
@@ -518,7 +541,6 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
     const total = desbloqueadas.length;
     const totalJogo = conquistas.length;
 
-    // Primeira vez que vê este jogo – salva sem notificar
     if (!db.conquistas[steamId][appid]) {
       db.conquistas[steamId][appid] = {
         total,
@@ -560,7 +582,6 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
       console.log(`      ✅ Notificação enviada: ${nomeBonito}`);
     }
 
-    // Atualiza estado
     db.conquistas[steamId][appid] = {
       total,
       nomes: desbloqueadas.map(c => c.apiname),
@@ -701,7 +722,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS (apenas compras, a cada 5 min)
+// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM DETECÇÃO DE COMPATIBILIDADE EA)
 // ============================================================
 async function checkNewGames() {
   const inicio = Date.now();
@@ -746,6 +767,7 @@ async function checkNewGames() {
           const nome = game.name || `App ${appid}`;
           const link = `https://store.steampowered.com/app/${appid}`;
 
+          // 🔥 VERIFICA COMPATIBILIDADE (AGORA DETECTA EA AUTOMATICAMENTE)
           const compat = await verificarCompatibilidadeFamilia(appid);
 
           if (compat.compatível) {
@@ -772,7 +794,6 @@ async function checkNewGames() {
               await enviarRanking();
             }
 
-            // Remove da lista /quero de quem tinha
             for (const [discordIdQuero, jogos] of Object.entries(db.listaQuero || {})) {
               if (!jogos) continue;
               for (const j of jogos) {
@@ -786,7 +807,7 @@ async function checkNewGames() {
               }
             }
           } else {
-            console.log(`⚠️ Jogo ${nome} (${appid}) é INCOMPATÍVEL com Family Sharing - não anunciado.`);
+            console.log(`⚠️ Jogo ${nome} (${appid}) é INCOMPATÍVEL com Family Sharing - não anunciado. Motivo: ${compat.motivo}`);
           }
         }
       }
@@ -804,7 +825,7 @@ async function checkNewGames() {
 }
 
 // ============================================================
-// 12. VERIFICAÇÃO DE CONQUISTAS (a cada 30s)
+// 12. VERIFICAÇÃO DE CONQUISTAS PERIÓDICA (RÁPIDA)
 // ============================================================
 async function checkAchievements() {
   const inicio = Date.now();
@@ -821,15 +842,11 @@ async function checkAchievements() {
       const discordId = member.discordId;
       const mention = `<@${discordId}>`;
 
-      // 🔥 DETECTA JOGO ATUAL
+      // Busca jogo atual
       const currentGame = await getCurrentGame(steamId);
-
-      // 🔥 BUSCA 3 JOGOS RECENTES
       let recentGames = await getRecentlyPlayedGames(steamId, 3);
 
-      // 🔥 MONTA LISTA DE JOGOS A VERIFICAR (priorizando o jogo atual)
       let gamesToCheck = [];
-
       if (currentGame) {
         const jaExiste = recentGames.some(g => g.appid === currentGame.appid);
         const currentGameObj = {
@@ -837,25 +854,21 @@ async function checkAchievements() {
           name: currentGame.name,
           rtime_last_played: Date.now() / 1000
         };
-
         if (jaExiste) {
           recentGames = recentGames.filter(g => g.appid !== currentGame.appid);
         }
-
-        // Jogo atual + 2 primeiros recentes (total 3)
         gamesToCheck = [currentGameObj, ...recentGames.slice(0, 2)];
       } else {
         gamesToCheck = recentGames.slice(0, 3);
       }
 
-      // 🔥 LOG DE POSIÇÃO E JOGO ATUAL
       const listaComPosicao = gamesToCheck.map((g, i) => {
         const isCurrent = currentGame && g.appid === currentGame.appid;
         return `${i+1}º: ${g.name || g.appid}${isCurrent ? ' 🟢' : ''}`;
       }).join(' | ');
+
       console.log(`📋 ${userName}: jogos a monitorar -> ${listaComPosicao}`);
 
-      // 🔥 VERIFICA CONQUISTAS
       await verificarConquistas(steamId, gamesToCheck, mention, userName);
 
     } catch (err) {
@@ -958,29 +971,25 @@ client.once('ready', async () => {
     salvarDB(db);
   }
 
-  // 🔥 PRIMEIRA VERIFICAÇÃO
-  await checkNewGames();
+  // Inicia as duas tarefas separadas
   await checkAchievements();
+  setInterval(checkAchievements, 30000); // Conquistas a cada 30 segundos
 
-  // 🔥 TAREFAS PERIÓDICAS
-  setInterval(checkNewGames, 5 * 60 * 1000); // 5 minutos
-  setInterval(checkAchievements, 30 * 1000); // 30 segundos
+  await checkNewGames();
+  setInterval(checkNewGames, 300000); // Novos jogos a cada 5 minutos
 
-  console.log(`🔄 Verificando novos jogos a cada 5 minutos`);
-  console.log(`🔄 Verificando conquistas a cada 30 segundos`);
-
-  // Promoções e lançamentos (já existentes)
   await verificarLancamentosQuero();
   setInterval(verificarLancamentosQuero, 5 * 60 * 1000);
-  console.log(`🔄 Verificando lançamentos a cada 5 minutos`);
 
   await verificarPromocoesQuero();
   setInterval(verificarPromocoesQuero, 5 * 60 * 1000);
-  console.log(`🔄 Verificando promoções a cada 5 minutos`);
+
+  console.log(`🔄 Monitorando conquistas a cada 30 segundos`);
+  console.log(`🔄 Monitorando novos jogos a cada 5 minutos`);
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot otimizado: conquistas a cada 30s, novos jogos a cada 5min.');
+    await dono.send('🚀 Bot atualizado: detecção automática de jogos EA + verificações separadas!');
   } catch (_) {}
 });
 
