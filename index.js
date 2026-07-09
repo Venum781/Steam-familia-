@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - PROGRESSO INCREMENTAL NAS CONQUISTAS
+// BOT STEAM FAMÍLIA - VERSÃO FINAL (SEM CAMPO COMPATIBILIDADE)
 // ============================================================
 
 require('dotenv').config();
@@ -727,7 +727,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS (COM DETECÇÃO DE COMPATIBILIDADE EA)
+// 11. VERIFICAÇÃO DE NOVOS JOGOS (SEM CAMPO "COMPATIBILIDADE")
 // ============================================================
 async function checkNewGames() {
   const inicio = Date.now();
@@ -775,13 +775,15 @@ async function checkNewGames() {
           const compat = await verificarCompatibilidadeFamilia(appid);
 
           if (compat.compatível) {
+            // 🔥 EMBED SEM CAMPO "COMPATIBILIDADE"
             const embed = new EmbedBuilder()
               .setColor(0x00FF00)
               .setTitle(`🛒 NOVO JOGO NA FAMÍLIA!`)
-              .setDescription(`**${userName}** agora tem acesso a **${nome}**!`)
+              .setDescription(
+                `**${userName}** agora tem acesso a **${nome}**!\n\n✅ **Compatível com Família Steam!**`
+              )
               .addFields(
-                { name: '🔗 Link', value: `[Ver na Steam](${link})`, inline: false },
-                { name: '✅ Compatibilidade', value: '✅ **Compatível com Família Steam!**', inline: false }
+                { name: '🔗 Link', value: `[Ver na Steam](${link})`, inline: false }
               )
               .setTimestamp();
             const detalhes = await getGameDetails(appid);
@@ -991,7 +993,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: progresso incremental nas conquistas!');
+    await dono.send('🚀 Bot atualizado: anúncios sem campo "Compatibilidade"!');
   } catch (_) {}
 });
 
