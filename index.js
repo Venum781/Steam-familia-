@@ -45,7 +45,7 @@ const MEMBROS = {
 };
 
 // 🔥 VERSÃO DO RANKING (aumente para forçar atualização)
-const RANKING_VERSION = 5;
+const RANKING_VERSION = 6;
 
 // 🔥 VALORES ATUAIS DO RANKING
 const RANKING_VALUES = {
