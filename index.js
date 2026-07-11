@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM NOVO MEMBRO E RANKING ATUALIZADO
+// BOT STEAM FAMÍLIA - RANKING ENVIADO APENAS NA PRIMEIRA EXECUÇÃO
 // ============================================================
 
 require('dotenv').config();
@@ -41,7 +41,6 @@ const MEMBROS = {
   '76561198446717315': { nome: 'WoollySkills', discordId: '479817686218702849' },
   '76561198110004039': { nome: 'Venum', discordId: '336204841972137995' },
   '76561198848231901': { nome: 'Mosk', discordId: '499311499504910344' },
-  // 🔥 NOVO MEMBRO
   '76561198406551864': { nome: 'DollynhoMococa', discordId: '340610951193690113' }
 };
 
@@ -949,6 +948,14 @@ client.once('ready', async () => {
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
 
+  // 🔥 ENVIA O RANKING APENAS SE NÃO HOUVER MENSAGEM SALVA (PRIMEIRA EXECUÇÃO)
+  if (!db.ultimaMensagemRankingId) {
+    console.log('📊 Primeira execução detectada. Enviando ranking inicial...');
+    await enviarRanking();
+  } else {
+    console.log('📊 Mensagem de ranking já existe. Não será enviada novamente.');
+  }
+
   if (db.historicoJogos && Object.keys(db.historicoJogos).length > 0) {
     console.log('📚 Histórico de jogos carregado do banco de dados.');
     for (const steamId of STEAM_IDS_ARRAY) {
@@ -997,7 +1004,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: novo membro DollynhoMococa adicionado e ranking atualizado!');
+    await dono.send('🚀 Bot atualizado: ranking enviado apenas na primeira inicialização!');
   } catch (_) {}
 });
 
