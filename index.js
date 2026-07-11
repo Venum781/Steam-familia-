@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM DOLLYNHOMOTOCOCA
+// BOT STEAM FAMÍLIA - COM NOVO MEMBRO E RANKING ATUALIZADO
 // ============================================================
 
 require('dotenv').config();
@@ -33,7 +33,7 @@ if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID) {
 const STEAM_IDS_ARRAY = STEAM_IDS.split(',').map(id => id.trim());
 
 // ============================================================
-// 2. MAPEAMENTO DOS MEMBROS (COM DOLLYNHOMOTOCOCA)
+// 2. MAPEAMENTO DOS MEMBROS (COM DOLLYNHOMOCoca)
 // ============================================================
 const MEMBROS = {
   '76561198127320557': { nome: 'Gardemi', discordId: '663789211152941065' },
@@ -41,11 +41,12 @@ const MEMBROS = {
   '76561198446717315': { nome: 'WoollySkills', discordId: '479817686218702849' },
   '76561198110004039': { nome: 'Venum', discordId: '336204841972137995' },
   '76561198848231901': { nome: 'Mosk', discordId: '499311499504910344' },
-  '76561198406551864': { nome: 'DollynhoMococa', discordId: '340610951193690113' }  // 🔥 NOVO MEMBRO
+  // 🔥 NOVO MEMBRO
+  '76561198406551864': { nome: 'DollynhoMococa', discordId: '340610951193690113' }
 };
 
 // ============================================================
-// 3. BANCO DE DADOS PERSISTENTE
+// 3. BANCO DE DADOS PERSISTENTE (COM RANKING INICIAL ATUALIZADO)
 // ============================================================
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -70,6 +71,20 @@ function carregarDB() {
       if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
       if (!parsed.lancamentosNotificados) parsed.lancamentosNotificados = {};
       if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {};
+      
+      // Se o ranking estiver vazio, preenche com os valores fornecidos
+      if (Object.keys(parsed.ranking).length === 0) {
+        console.log('📊 Inicializando ranking com valores fornecidos...');
+        parsed.ranking = {
+          '76561198127320557': { nome: 'Gardemi', jogos: 127, steamId: '76561198127320557', discordId: '663789211152941065' },
+          '76561197967265286': { nome: 'Marlon', jogos: 127, steamId: '76561197967265286', discordId: '1022183877114069083' },
+          '76561198848231901': { nome: 'Mosk', jogos: 15, steamId: '76561198848231901', discordId: '499311499504910344' },
+          '76561198446717315': { nome: 'WoollySkills', jogos: 17, steamId: '76561198446717315', discordId: '479817686218702849' },
+          '76561198110004039': { nome: 'Venum', jogos: 12, steamId: '76561198110004039', discordId: '336204841972137995' },
+          '76561198406551864': { nome: 'DollynhoMococa', jogos: 0, steamId: '76561198406551864', discordId: '340610951193690113' }
+        };
+        salvarDB(parsed);
+      }
       return parsed;
     } else {
       console.log(`ℹ️ DB não encontrado em ${DB_FILE}, criando novo...`);
@@ -80,8 +95,16 @@ function carregarDB() {
       fs.copyFileSync(DB_FILE, `${DB_FILE}.backup_${Date.now()}`);
     }
   }
-  return {
-    ranking: {},
+  // Estrutura inicial com ranking pré-preenchido
+  const novoDB = {
+    ranking: {
+      '76561198127320557': { nome: 'Gardemi', jogos: 127, steamId: '76561198127320557', discordId: '663789211152941065' },
+      '76561197967265286': { nome: 'Marlon', jogos: 127, steamId: '76561197967265286', discordId: '1022183877114069083' },
+      '76561198848231901': { nome: 'Mosk', jogos: 15, steamId: '76561198848231901', discordId: '499311499504910344' },
+      '76561198446717315': { nome: 'WoollySkills', jogos: 17, steamId: '76561198446717315', discordId: '479817686218702849' },
+      '76561198110004039': { nome: 'Venum', jogos: 12, steamId: '76561198110004039', discordId: '336204841972137995' },
+      '76561198406551864': { nome: 'DollynhoMococa', jogos: 0, steamId: '76561198406551864', discordId: '340610951193690113' }
+    },
     conquistas: {},
     listaQuero: {},
     historicoJogos: {},
@@ -89,6 +112,9 @@ function carregarDB() {
     lancamentosNotificados: {},
     jogosSemConquistas: {}
   };
+  console.log('📊 Ranking inicial criado com os valores fornecidos.');
+  salvarDB(novoDB);
+  return novoDB;
 }
 
 function salvarDB(db) {
@@ -103,22 +129,8 @@ function salvarDB(db) {
 
 let db = carregarDB();
 
-if (!db.ranking || Object.keys(db.ranking).length === 0) {
-  console.log('📊 Inicializando ranking...');
-  db.ranking = {};
-  for (const [steamId, info] of Object.entries(MEMBROS)) {
-    db.ranking[steamId] = {
-      nome: info.nome,
-      jogos: 0,
-      steamId,
-      discordId: info.discordId
-    };
-  }
-  salvarDB(db);
-}
-
 // ============================================================
-// 4. FUNÇÕES DA STEAM API
+// 4. FUNÇÕES DA STEAM API (MANTIDAS IGUAIS)
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -156,7 +168,7 @@ async function getOwnedGames(steamId) {
   return data?.response?.games || [];
 }
 
-async function getRecentlyPlayedGames(steamId, limit = 5) {
+async function getRecentlyPlayedGames(steamId, limit = 3) {
   const data = await fetchSteam(
     'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/',
     { steamid: steamId, count: limit, format: 'json' }
@@ -274,7 +286,7 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
-// 🔥 LISTA MANUAL DE JOGOS INCOMPATÍVEIS (FALLBACK)
+// 🔥 LISTA MANUAL DE JOGOS INCOMPATÍVEIS
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
   107410: "Arma 3",
@@ -311,9 +323,7 @@ const JOGOS_INCOMPATIVEIS = {
   1222700: "A Way Out"
 };
 
-// 🔥 FUNÇÃO PARA VERIFICAR COMPATIBILIDADE (COM DETECÇÃO AUTOMÁTICA DE EA)
 async function verificarCompatibilidadeFamilia(appId) {
-  // 1. Verifica na lista manual
   if (JOGOS_INCOMPATIVEIS[appId]) {
     return {
       compatível: false,
@@ -321,14 +331,12 @@ async function verificarCompatibilidadeFamilia(appId) {
     };
   }
 
-  // 2. Busca detalhes do jogo para detectar editor/desenvolvedor
   try {
     const detalhes = await getGameDetails(appId);
     if (detalhes) {
       const publishers = detalhes.publishers || [];
       const developers = detalhes.developers || [];
 
-      // 3. Detecta jogos da Electronic Arts
       const isEA = publishers.some(p => 
         p.toLowerCase().includes('ea ') || 
         p.toLowerCase().includes('electronic arts') ||
@@ -348,7 +356,6 @@ async function verificarCompatibilidadeFamilia(appId) {
         };
       }
 
-      // Verifica outras flags
       if (detalhes.is_free) {
         return { compatível: false, motivo: 'Jogo gratuito não requer Family Sharing' };
       }
@@ -367,7 +374,6 @@ async function verificarCompatibilidadeFamilia(appId) {
     console.error(`❌ Erro ao verificar compatibilidade do jogo ${appId}:`, e.message);
   }
   
-  // Fallback: assume compatível se não estiver na lista e não houver erro
   return { compatível: true, motivo: null };
 }
 
@@ -459,10 +465,10 @@ function gerarRankingEmbed() {
     .setThumbnail('https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/1200px-Steam_icon_logo.svg.png')
     .setTimestamp()
     .setFooter({ text: `Atualizado ${new Date().toLocaleTimeString()}` });
-  const medalhas = ['🥇', '🥈', '🥉'];
+  const medalhas = ['🥇', '🥈', '🥉', '🏅', '🏅', '🏅'];
   let desc = '';
   rankingArray.forEach((user, i) => {
-    const pos = i < 3 ? medalhas[i] : `${i+1}°`;
+    const pos = i < 3 ? medalhas[i] : `${medalhas[i]} ${i+1}°`;
     const mencao = user.discordId ? `<@${user.discordId}>` : user.nome;
     desc += `${pos} **${mencao}** — ${user.jogos} jogos\n`;
   });
@@ -491,7 +497,7 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS (COM PROGRESSO INCREMENTAL)
+// 8. VERIFICAÇÃO DE CONQUISTAS (PROGRESSO INCREMENTAL)
 // ============================================================
 async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   if (!gamesToCheck?.length) return;
@@ -562,7 +568,6 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
     novasConquistas += novas.length;
     const faltam = totalJogo - total;
 
-    // 🔥 PROGRESSO INCREMENTAL
     let contador = 0;
     for (const ach of novas) {
       contador++;
@@ -587,7 +592,6 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
       console.log(`      ✅ Notificação enviada: ${nomeBonito} (${progresso})`);
     }
 
-    // Atualiza estado
     db.conquistas[steamId][appid] = {
       total,
       nomes: desbloqueadas.map(c => c.apiname),
@@ -728,7 +732,7 @@ async function verificarPromocoesQuero() {
 }
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS (SEM CAMPO "COMPATIBILIDADE")
+// 11. VERIFICAÇÃO DE NOVOS JOGOS
 // ============================================================
 async function checkNewGames() {
   const inicio = Date.now();
@@ -831,7 +835,7 @@ async function checkNewGames() {
 }
 
 // ============================================================
-// 12. VERIFICAÇÃO DE CONQUISTAS PERIÓDICA (RÁPIDA)
+// 12. VERIFICAÇÃO DE CONQUISTAS PERIÓDICA
 // ============================================================
 async function checkAchievements() {
   const inicio = Date.now();
@@ -993,12 +997,12 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: novo membro DollynhoMococa adicionado!');
+    await dono.send('🚀 Bot atualizado: novo membro DollynhoMococa adicionado e ranking atualizado!');
   } catch (_) {}
 });
 
 // ============================================================
-// 15. COMANDOS SLASH
+// 15. COMANDOS SLASH (MANTIDOS IGUAIS)
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
