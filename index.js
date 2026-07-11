@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - RANKING COM SISTEMA DE VERSÃO
+// BOT STEAM FAMÍLIA - RANKING COM ATUALIZAÇÃO POR VERSÃO
 // ============================================================
 
 require('dotenv').config();
@@ -44,8 +44,18 @@ const MEMBROS = {
   '76561198406551864': { nome: 'DollynhoMococa', discordId: '340610951193690113' }
 };
 
-// 🔥 VERSÃO DO RANKING (aumente este número para forçar o envio)
-const RANKING_VERSION = 2; // <-- MUDE PARA 3, 4, etc. PARA FORÇAR O ENVIO
+// 🔥 VERSÃO DO RANKING (aumente este número para forçar a atualização)
+const RANKING_VERSION = 4; // <-- MUDE PARA 4, 5, etc. PARA FORÇAR A ATUALIZAÇÃO
+
+// 🔥 VALORES ATUAIS DO RANKING (substitua pelos números corretos)
+const RANKING_VALUES = {
+  '76561198127320557': 127,  // Gardemi
+  '76561197967265286': 127,  // Marlon
+  '76561198848231901': 15,   // Mosk
+  '76561198446717315': 17,   // WoollySkills
+  '76561198110004039': 12,   // Venum
+  '76561198406551864': 0     // DollynhoMococa
+};
 
 // ============================================================
 // 3. BANCO DE DADOS PERSISTENTE
@@ -73,20 +83,23 @@ function carregarDB() {
       if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
       if (!parsed.lancamentosNotificados) parsed.lancamentosNotificados = {};
       if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {};
-      if (!parsed.rankingVersion) parsed.rankingVersion = 0; // 🔥 NOVO CAMPO
+      if (!parsed.rankingVersion) parsed.rankingVersion = 0;
       
       // Se o ranking estiver vazio, preenche com os valores fornecidos
       if (Object.keys(parsed.ranking).length === 0) {
         console.log('📊 Inicializando ranking com valores fornecidos...');
-        parsed.ranking = {
-          '76561198127320557': { nome: 'Gardemi', jogos: 127, steamId: '76561198127320557', discordId: '663789211152941065' },
-          '76561197967265286': { nome: 'Marlon', jogos: 127, steamId: '76561197967265286', discordId: '1022183877114069083' },
-          '76561198848231901': { nome: 'Mosk', jogos: 15, steamId: '76561198848231901', discordId: '499311499504910344' },
-          '76561198446717315': { nome: 'WoollySkills', jogos: 17, steamId: '76561198446717315', discordId: '479817686218702849' },
-          '76561198110004039': { nome: 'Venum', jogos: 12, steamId: '76561198110004039', discordId: '336204841972137995' },
-          '76561198406551864': { nome: 'DollynhoMococa', jogos: 0, steamId: '76561198406551864', discordId: '340610951193690113' }
-        };
-        parsed.rankingVersion = RANKING_VERSION; // Define a versão atual
+        for (const [steamId, jogos] of Object.entries(RANKING_VALUES)) {
+          const member = MEMBROS[steamId];
+          if (member) {
+            parsed.ranking[steamId] = {
+              nome: member.nome,
+              jogos: jogos,
+              steamId: steamId,
+              discordId: member.discordId
+            };
+          }
+        }
+        parsed.rankingVersion = RANKING_VERSION;
         salvarDB(parsed);
       }
       return parsed;
@@ -101,22 +114,27 @@ function carregarDB() {
   }
   // Estrutura inicial com ranking pré-preenchido
   const novoDB = {
-    ranking: {
-      '76561198127320557': { nome: 'Gardemi', jogos: 127, steamId: '76561198127320557', discordId: '663789211152941065' },
-      '76561197967265286': { nome: 'Marlon', jogos: 127, steamId: '76561197967265286', discordId: '1022183877114069083' },
-      '76561198848231901': { nome: 'Mosk', jogos: 15, steamId: '76561198848231901', discordId: '499311499504910344' },
-      '76561198446717315': { nome: 'WoollySkills', jogos: 17, steamId: '76561198446717315', discordId: '479817686218702849' },
-      '76561198110004039': { nome: 'Venum', jogos: 12, steamId: '76561198110004039', discordId: '336204841972137995' },
-      '76561198406551864': { nome: 'DollynhoMococa', jogos: 0, steamId: '76561198406551864', discordId: '340610951193690113' }
-    },
+    ranking: {},
     conquistas: {},
     listaQuero: {},
     historicoJogos: {},
     ultimaMensagemRankingId: null,
     lancamentosNotificados: {},
     jogosSemConquistas: {},
-    rankingVersion: RANKING_VERSION // 🔥 NOVO CAMPO
+    rankingVersion: 0
   };
+  for (const [steamId, jogos] of Object.entries(RANKING_VALUES)) {
+    const member = MEMBROS[steamId];
+    if (member) {
+      novoDB.ranking[steamId] = {
+        nome: member.nome,
+        jogos: jogos,
+        steamId: steamId,
+        discordId: member.discordId
+      };
+    }
+  }
+  novoDB.rankingVersion = RANKING_VERSION;
   console.log('📊 Ranking inicial criado com os valores fornecidos.');
   salvarDB(novoDB);
   return novoDB;
@@ -479,6 +497,27 @@ function gerarRankingEmbed() {
   });
   embed.setDescription(desc);
   return embed;
+}
+
+// 🔥 FUNÇÃO PARA ATUALIZAR O RANKING COM OS VALORES FORNECIDOS
+function atualizarRanking() {
+  console.log('📊 Atualizando ranking com os valores fornecidos...');
+  for (const [steamId, jogos] of Object.entries(RANKING_VALUES)) {
+    const member = MEMBROS[steamId];
+    if (member && db.ranking[steamId]) {
+      db.ranking[steamId].jogos = jogos;
+    } else if (member && !db.ranking[steamId]) {
+      db.ranking[steamId] = {
+        nome: member.nome,
+        jogos: jogos,
+        steamId: steamId,
+        discordId: member.discordId
+      };
+    }
+  }
+  db.rankingVersion = RANKING_VERSION;
+  salvarDB(db);
+  console.log('✅ Ranking atualizado com sucesso!');
 }
 
 async function enviarRanking() {
@@ -954,12 +993,11 @@ client.once('ready', async () => {
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
 
-  // 🔥 VERIFICA SE A VERSÃO DO RANKING É MAIS RECENTE
+  // 🔥 VERIFICA SE A VERSÃO DO RANKING É MAIS RECENTE (E ATUALIZA OS NÚMEROS)
   if (!db.rankingVersion || db.rankingVersion < RANKING_VERSION) {
     console.log(`📊 Atualizando ranking para a versão ${RANKING_VERSION}...`);
-    await enviarRanking();
-    db.rankingVersion = RANKING_VERSION;
-    salvarDB(db);
+    atualizarRanking(); // Atualiza os números do ranking
+    await enviarRanking(); // Envia a mensagem atualizada
   } else {
     console.log(`📊 Ranking já está na versão ${db.rankingVersion} (atual).`);
   }
@@ -1012,7 +1050,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send(`🚀 Bot atualizado! Ranking versão ${RANKING_VERSION} enviado.`);
+    await dono.send(`🚀 Bot atualizado! Ranking versão ${RANKING_VERSION} com números corretos.`);
   } catch (_) {}
 });
 
@@ -1265,13 +1303,15 @@ client.on('messageCreate', async (message) => {
     time: 30000
   });
   collector.on('collect', async () => {
+    // Zera o ranking
     for (const sid of STEAM_IDS_ARRAY) {
       if (db.ranking[sid]) db.ranking[sid].jogos = 0;
     }
-    db.rankingVersion = 0; // Reseta a versão para forçar o envio na próxima inicialização
+    db.rankingVersion = 0;
     salvarDB(db);
     await enviarRanking();
-    db.rankingVersion = RANKING_VERSION; // Atualiza para a versão atual
+    // Atualiza para a versão atual (para não enviar de novo na próxima inicialização)
+    db.rankingVersion = RANKING_VERSION;
     salvarDB(db);
     await message.reply('✅ Ranking resetado.');
   });
