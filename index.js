@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - RANKING ENVIADO APENAS NA PRIMEIRA EXECUÇÃO
+// BOT STEAM FAMÍLIA - RANKING COM SISTEMA DE VERSÃO
 // ============================================================
 
 require('dotenv').config();
@@ -44,8 +44,11 @@ const MEMBROS = {
   '76561198406551864': { nome: 'DollynhoMococa', discordId: '340610951193690113' }
 };
 
+// 🔥 VERSÃO DO RANKING (aumente este número para forçar o envio)
+const RANKING_VERSION = 2; // <-- MUDE PARA 3, 4, etc. PARA FORÇAR O ENVIO
+
 // ============================================================
-// 3. BANCO DE DADOS PERSISTENTE (COM RANKING INICIAL ATUALIZADO)
+// 3. BANCO DE DADOS PERSISTENTE
 // ============================================================
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -70,6 +73,7 @@ function carregarDB() {
       if (!parsed.ultimaMensagemRankingId) parsed.ultimaMensagemRankingId = null;
       if (!parsed.lancamentosNotificados) parsed.lancamentosNotificados = {};
       if (!parsed.jogosSemConquistas) parsed.jogosSemConquistas = {};
+      if (!parsed.rankingVersion) parsed.rankingVersion = 0; // 🔥 NOVO CAMPO
       
       // Se o ranking estiver vazio, preenche com os valores fornecidos
       if (Object.keys(parsed.ranking).length === 0) {
@@ -82,6 +86,7 @@ function carregarDB() {
           '76561198110004039': { nome: 'Venum', jogos: 12, steamId: '76561198110004039', discordId: '336204841972137995' },
           '76561198406551864': { nome: 'DollynhoMococa', jogos: 0, steamId: '76561198406551864', discordId: '340610951193690113' }
         };
+        parsed.rankingVersion = RANKING_VERSION; // Define a versão atual
         salvarDB(parsed);
       }
       return parsed;
@@ -109,7 +114,8 @@ function carregarDB() {
     historicoJogos: {},
     ultimaMensagemRankingId: null,
     lancamentosNotificados: {},
-    jogosSemConquistas: {}
+    jogosSemConquistas: {},
+    rankingVersion: RANKING_VERSION // 🔥 NOVO CAMPO
   };
   console.log('📊 Ranking inicial criado com os valores fornecidos.');
   salvarDB(novoDB);
@@ -948,12 +954,14 @@ client.once('ready', async () => {
   console.log(`💾 Usando banco de dados em: ${DB_FILE}`);
   await registrarComandos();
 
-  // 🔥 ENVIA O RANKING APENAS SE NÃO HOUVER MENSAGEM SALVA (PRIMEIRA EXECUÇÃO)
-  if (!db.ultimaMensagemRankingId) {
-    console.log('📊 Primeira execução detectada. Enviando ranking inicial...');
+  // 🔥 VERIFICA SE A VERSÃO DO RANKING É MAIS RECENTE
+  if (!db.rankingVersion || db.rankingVersion < RANKING_VERSION) {
+    console.log(`📊 Atualizando ranking para a versão ${RANKING_VERSION}...`);
     await enviarRanking();
+    db.rankingVersion = RANKING_VERSION;
+    salvarDB(db);
   } else {
-    console.log('📊 Mensagem de ranking já existe. Não será enviada novamente.');
+    console.log(`📊 Ranking já está na versão ${db.rankingVersion} (atual).`);
   }
 
   if (db.historicoJogos && Object.keys(db.historicoJogos).length > 0) {
@@ -1004,7 +1012,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: ranking enviado apenas na primeira inicialização!');
+    await dono.send(`🚀 Bot atualizado! Ranking versão ${RANKING_VERSION} enviado.`);
   } catch (_) {}
 });
 
@@ -1260,8 +1268,11 @@ client.on('messageCreate', async (message) => {
     for (const sid of STEAM_IDS_ARRAY) {
       if (db.ranking[sid]) db.ranking[sid].jogos = 0;
     }
+    db.rankingVersion = 0; // Reseta a versão para forçar o envio na próxima inicialização
     salvarDB(db);
     await enviarRanking();
+    db.rankingVersion = RANKING_VERSION; // Atualiza para a versão atual
+    salvarDB(db);
     await message.reply('✅ Ranking resetado.');
   });
   collector.on('end', collected => {
