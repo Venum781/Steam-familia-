@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO FINAL (SEM CAMPO COMPATIBILIDADE)
+// BOT STEAM FAMÍLIA - COM DOLLYNHOMOTOCOCA
 // ============================================================
 
 require('dotenv').config();
@@ -33,14 +33,15 @@ if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID) {
 const STEAM_IDS_ARRAY = STEAM_IDS.split(',').map(id => id.trim());
 
 // ============================================================
-// 2. MAPEAMENTO DOS MEMBROS
+// 2. MAPEAMENTO DOS MEMBROS (COM DOLLYNHOMOTOCOCA)
 // ============================================================
 const MEMBROS = {
   '76561198127320557': { nome: 'Gardemi', discordId: '663789211152941065' },
   '76561197967265286': { nome: 'Marlon', discordId: '1022183877114069083' },
   '76561198446717315': { nome: 'WoollySkills', discordId: '479817686218702849' },
   '76561198110004039': { nome: 'Venum', discordId: '336204841972137995' },
-  '76561198848231901': { nome: 'Mosk', discordId: '499311499504910344' }
+  '76561198848231901': { nome: 'Mosk', discordId: '499311499504910344' },
+  '76561198406551864': { nome: 'DollynhoMococa', discordId: '340610951193690113' }  // 🔥 NOVO MEMBRO
 };
 
 // ============================================================
@@ -775,7 +776,6 @@ async function checkNewGames() {
           const compat = await verificarCompatibilidadeFamilia(appid);
 
           if (compat.compatível) {
-            // 🔥 EMBED SEM CAMPO "COMPATIBILIDADE"
             const embed = new EmbedBuilder()
               .setColor(0x00FF00)
               .setTitle(`🛒 NOVO JOGO NA FAMÍLIA!`)
@@ -993,7 +993,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send('🚀 Bot atualizado: anúncios sem campo "Compatibilidade"!');
+    await dono.send('🚀 Bot atualizado: novo membro DollynhoMococa adicionado!');
   } catch (_) {}
 });
 
