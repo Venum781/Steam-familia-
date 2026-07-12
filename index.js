@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COMPLETO E ESTÁVEL
+// BOT STEAM FAMÍLIA - BANCO DE DADOS EM ANEXO (CANAL PRIVADO)
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
@@ -8,7 +8,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder } = require('discord.js');
 
 console.log('🚀 [2] Dependências carregadas.');
 
@@ -36,6 +36,7 @@ if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID || !QUERO_CHANNEL_
 }
 
 const STEAM_IDS_ARRAY = STEAM_IDS.split(',').map(id => id.trim());
+const QUERO_CHANNEL = QUERO_CHANNEL_ID;
 
 // ============================================================
 // 2. MAPEAMENTO DOS MEMBROS
@@ -68,11 +69,10 @@ const ACHIEVEMENT_EMOJI = '<:Trofeu:1525724119142891571>';
 console.log('🚀 [5] Constantes definidas.');
 
 // ============================================================
-// 4. BANCO DE DADOS NO CANAL PRIVADO
+// 4. BANCO DE DADOS (ARMAZENADO COMO ANEXO NO CANAL)
 // ============================================================
 let db = null;
 let dbMessageId = null;
-const QUERO_CHANNEL = QUERO_CHANNEL_ID;
 
 function criarDBInicial() {
   const ranking = {};
@@ -98,10 +98,173 @@ function criarDBInicial() {
   };
 }
 
-console.log('🚀 [6] Funções de banco de dados definidas.');
+// 🔥 CARREGA O BANCO DO ANEXO NO CANAL
+async function carregarDBDoCanal() {
+  const channel = client.channels.cache.get(QUERO_CHANNEL);
+  if (!channel) {
+    console.error('❌ Canal QUERO_CHANNEL não encontrado!');
+    return null;
+  }
+  try {
+    const messages = await channel.messages.fetch({ limit: 50 });
+    const dbMsg = messages.find(m => m.content === 'DB_FILE' && m.attachments.size > 0);
+    if (dbMsg) {
+      dbMessageId = dbMsg.id;
+      const attachment = dbMsg.attachments.first();
+      if (attachment && attachment.url) {
+        const response = await axios.get(attachment.url, { responseType: 'json' });
+        console.log('✅ Banco de dados carregado do anexo do canal.');
+        return response.data;
+      }
+    }
+  } catch (e) {
+    console.error('❌ Erro ao carregar banco do anexo:', e);
+  }
+  return null;
+}
+
+// 🔥 SALVA O BANCO COMO ANEXO NO CANAL
+async function salvarDBNoCanal() {
+  const channel = client.channels.cache.get(QUERO_CHANNEL);
+  if (!channel) {
+    console.error('❌ Canal QUERO_CHANNEL não encontrado!');
+    return false;
+  }
+  try {
+    // Apaga a mensagem antiga, se existir
+    if (dbMessageId) {
+      try {
+        const antiga = await channel.messages.fetch(dbMessageId);
+        if (antiga) await antiga.delete();
+      } catch (_) {}
+    }
+    // Cria o buffer do JSON
+    const jsonData = JSON.stringify(db, null, 2);
+    const buffer = Buffer.from(jsonData, 'utf-8');
+    const attachment = new AttachmentBuilder(buffer, { name: 'db.json' });
+    // Envia a nova mensagem com o anexo
+    const novaMsg = await channel.send({
+      content: 'DB_FILE',
+      files: [attachment]
+    });
+    dbMessageId = novaMsg.id;
+    return true;
+  } catch (e) {
+    console.error('❌ Erro ao salvar banco no anexo:', e);
+    return false;
+  }
+}
+
+// 🔥 INICIALIZA O BANCO
+async function inicializarDB() {
+  const dados = await carregarDBDoCanal();
+  if (dados) {
+    db = dados;
+    if (!db.ranking) db.ranking = {};
+    if (!db.conquistas) db.conquistas = {};
+    if (!db.historicoJogos) db.historicoJogos = {};
+    if (!db.ultimaMensagemRankingId) db.ultimaMensagemRankingId = null;
+    if (!db.lancamentosNotificados) db.lancamentosNotificados = {};
+    if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+    if (!db.rankingVersion) db.rankingVersion = 0;
+    if (db.rankingVersion < RANKING_VERSION) {
+      for (const [steamId, jogos] of Object.entries(RANKING_VALUES)) {
+        const member = MEMBROS[steamId];
+        if (member && db.ranking[steamId]) {
+          db.ranking[steamId].jogos = jogos;
+        } else if (member && !db.ranking[steamId]) {
+          db.ranking[steamId] = {
+            nome: member.nome,
+            jogos: jogos,
+            steamId: steamId,
+            discordId: member.discordId
+          };
+        }
+      }
+      db.rankingVersion = RANKING_VERSION;
+      await salvarDBNoCanal();
+    }
+    console.log(`💾 Banco de dados carregado do anexo (versão ${db.rankingVersion})`);
+  } else {
+    db = criarDBInicial();
+    await salvarDBNoCanal();
+    console.log('📊 Banco de dados inicial criado como anexo no canal.');
+  }
+}
+
+console.log('🚀 [6] Funções de banco de dados (anexo) definidas.');
 
 // ============================================================
-// 5. FUNÇÕES DA STEAM API (APENAS AS ESSENCIAIS)
+// 5. FUNÇÕES DE LISTA /quero (NO CANAL PRIVADO – TEXTO)
+// ============================================================
+async function getQueroMessage(discordId) {
+  const channel = client.channels.cache.get(QUERO_CHANNEL);
+  if (!channel) return null;
+  try {
+    const messages = await channel.messages.fetch({ limit: 100 });
+    return messages.find(m => m.content.startsWith(`QUERO_${discordId}:`)) || null;
+  } catch (_) { return null; }
+}
+
+async function loadQueroList(discordId) {
+  const msg = await getQueroMessage(discordId);
+  if (!msg) return [];
+  try {
+    const jsonPart = msg.content.substring(msg.content.indexOf(':') + 1).trim();
+    const list = JSON.parse(jsonPart);
+    return Array.isArray(list) ? list : [];
+  } catch (_) { return []; }
+}
+
+async function saveQueroList(discordId, list) {
+  const channel = client.channels.cache.get(QUERO_CHANNEL);
+  if (!channel) return false;
+  const content = `QUERO_${discordId}: ${JSON.stringify(list)}`;
+  try {
+    const msg = await getQueroMessage(discordId);
+    if (msg) await msg.edit(content);
+    else await channel.send(content);
+    return true;
+  } catch (_) { return false; }
+}
+
+async function adicionarQuero(discordId, appid, nome, link) {
+  const lista = await loadQueroList(discordId);
+  if (lista.some(j => j.appid === appid)) return { sucesso: false, motivo: 'ja_na_lista' };
+  for (const sid of STEAM_IDS_ARRAY) {
+    if ((db.historicoJogos[sid] || []).includes(appid)) {
+      const dono = MEMBROS[sid]?.nome || sid;
+      return { sucesso: false, motivo: 'ja_na_familia', dono };
+    }
+  }
+  let comingSoon = null;
+  try {
+    const detalhes = await getGameDetails(appid);
+    if (detalhes && detalhes.release_date) comingSoon = detalhes.release_date.coming_soon === true;
+  } catch (_) {}
+  lista.push({ appid, nome, link, adicionado_em: new Date().toISOString(), coming_soon: comingSoon, ultimoEstadoPromocao: null });
+  await saveQueroList(discordId, lista);
+  return { sucesso: true };
+}
+
+async function removerQuero(discordId, appid) {
+  const lista = await loadQueroList(discordId);
+  const novaLista = lista.filter(j => j.appid !== appid);
+  if (novaLista.length < lista.length) {
+    await saveQueroList(discordId, novaLista);
+    return true;
+  }
+  return false;
+}
+
+async function listarQuero(discordId) {
+  return await loadQueroList(discordId);
+}
+
+console.log('🚀 [7] Funções /quero carregadas.');
+
+// ============================================================
+// 6. FUNÇÕES DA STEAM API
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -252,10 +415,10 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
-console.log('🚀 [7] Funções da Steam API carregadas.');
+console.log('🚀 [8] Funções da Steam API carregadas.');
 
 // ============================================================
-// 6. COMPATIBILIDADE
+// 7. COMPATIBILIDADE
 // ============================================================
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
@@ -328,167 +491,10 @@ function extrairAppIdDaUrl(url) {
   return match ? parseInt(match[1]) : null;
 }
 
-console.log('🚀 [8] Funções de compatibilidade carregadas.');
+console.log('🚀 [9] Funções de compatibilidade carregadas.');
 
 // ============================================================
-// 7. FUNÇÕES DE LISTA /quero
-// ============================================================
-async function getQueroMessage(discordId) {
-  const channel = client.channels.cache.get(QUERO_CHANNEL);
-  if (!channel) return null;
-  try {
-    const messages = await channel.messages.fetch({ limit: 100 });
-    return messages.find(m => m.content.startsWith(`QUERO_${discordId}:`)) || null;
-  } catch (_) { return null; }
-}
-
-async function loadQueroList(discordId) {
-  const msg = await getQueroMessage(discordId);
-  if (!msg) return [];
-  try {
-    const jsonPart = msg.content.substring(msg.content.indexOf(':') + 1).trim();
-    const list = JSON.parse(jsonPart);
-    return Array.isArray(list) ? list : [];
-  } catch (_) { return []; }
-}
-
-async function saveQueroList(discordId, list) {
-  const channel = client.channels.cache.get(QUERO_CHANNEL);
-  if (!channel) return false;
-  const content = `QUERO_${discordId}: ${JSON.stringify(list)}`;
-  try {
-    const msg = await getQueroMessage(discordId);
-    if (msg) await msg.edit(content);
-    else await channel.send(content);
-    return true;
-  } catch (_) { return false; }
-}
-
-async function adicionarQuero(discordId, appid, nome, link) {
-  const lista = await loadQueroList(discordId);
-  if (lista.some(j => j.appid === appid)) return { sucesso: false, motivo: 'ja_na_lista' };
-  for (const sid of STEAM_IDS_ARRAY) {
-    if ((db.historicoJogos[sid] || []).includes(appid)) {
-      const dono = MEMBROS[sid]?.nome || sid;
-      return { sucesso: false, motivo: 'ja_na_familia', dono };
-    }
-  }
-  let comingSoon = null;
-  try {
-    const detalhes = await getGameDetails(appid);
-    if (detalhes && detalhes.release_date) comingSoon = detalhes.release_date.coming_soon === true;
-  } catch (_) {}
-  lista.push({ appid, nome, link, adicionado_em: new Date().toISOString(), coming_soon: comingSoon, ultimoEstadoPromocao: null });
-  await saveQueroList(discordId, lista);
-  return { sucesso: true };
-}
-
-async function removerQuero(discordId, appid) {
-  const lista = await loadQueroList(discordId);
-  const novaLista = lista.filter(j => j.appid !== appid);
-  if (novaLista.length < lista.length) {
-    await saveQueroList(discordId, novaLista);
-    return true;
-  }
-  return false;
-}
-
-async function listarQuero(discordId) {
-  return await loadQueroList(discordId);
-}
-
-console.log('🚀 [9] Funções /quero carregadas.');
-
-// ============================================================
-// 8. FUNÇÕES DE BANCO DE DADOS DO CANAL
-// ============================================================
-async function carregarDBDoCanal() {
-  try {
-    const channel = client.channels.cache.get(QUERO_CHANNEL);
-    if (!channel) {
-      console.error('❌ Canal QUERO_CHANNEL não encontrado!');
-      return null;
-    }
-    const messages = await channel.messages.fetch({ limit: 50 });
-    const dbMsg = messages.find(m => m.content.startsWith('DB_MASTER:'));
-    if (dbMsg) {
-      dbMessageId = dbMsg.id;
-      const jsonPart = dbMsg.content.substring(dbMsg.content.indexOf(':') + 1).trim();
-      const parsed = JSON.parse(jsonPart);
-      console.log('✅ Banco de dados carregado do canal.');
-      return parsed;
-    }
-  } catch (e) {
-    console.error('❌ Erro ao carregar banco do canal:', e);
-  }
-  return null;
-}
-
-async function salvarDBNoCanal() {
-  try {
-    const channel = client.channels.cache.get(QUERO_CHANNEL);
-    if (!channel) {
-      console.error('❌ Canal QUERO_CHANNEL não encontrado!');
-      return false;
-    }
-    const content = `DB_MASTER: ${JSON.stringify(db)}`;
-    if (dbMessageId) {
-      const msg = await channel.messages.fetch(dbMessageId);
-      if (msg) {
-        await msg.edit(content);
-        return true;
-      }
-    }
-    const novaMsg = await channel.send(content);
-    dbMessageId = novaMsg.id;
-    return true;
-  } catch (e) {
-    console.error('❌ Erro ao salvar banco no canal:', e);
-    return false;
-  }
-}
-
-async function inicializarDB() {
-  const dados = await carregarDBDoCanal();
-  if (dados) {
-    db = dados;
-    // Garante que todas as chaves existam
-    if (!db.ranking) db.ranking = {};
-    if (!db.conquistas) db.conquistas = {};
-    if (!db.historicoJogos) db.historicoJogos = {};
-    if (!db.ultimaMensagemRankingId) db.ultimaMensagemRankingId = null;
-    if (!db.lancamentosNotificados) db.lancamentosNotificados = {};
-    if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
-    if (!db.rankingVersion) db.rankingVersion = 0;
-    if (db.rankingVersion < RANKING_VERSION) {
-      for (const [steamId, jogos] of Object.entries(RANKING_VALUES)) {
-        const member = MEMBROS[steamId];
-        if (member && db.ranking[steamId]) {
-          db.ranking[steamId].jogos = jogos;
-        } else if (member && !db.ranking[steamId]) {
-          db.ranking[steamId] = {
-            nome: member.nome,
-            jogos: jogos,
-            steamId: steamId,
-            discordId: member.discordId
-          };
-        }
-      }
-      db.rankingVersion = RANKING_VERSION;
-      await salvarDBNoCanal();
-    }
-    console.log(`💾 Banco de dados carregado (versão ${db.rankingVersion})`);
-  } else {
-    db = criarDBInicial();
-    await salvarDBNoCanal();
-    console.log('📊 Banco de dados inicial criado no canal.');
-  }
-}
-
-console.log('🚀 [10] Funções de banco de dados prontas.');
-
-// ============================================================
-// 9. RANKING
+// 8. RANKING
 // ============================================================
 function gerarRankingEmbed() {
   const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
@@ -528,10 +534,10 @@ async function enviarRanking() {
   }
 }
 
-console.log('🚀 [11] Funções de ranking carregadas.');
+console.log('🚀 [10] Funções de ranking carregadas.');
 
 // ============================================================
-// 10. VERIFICAÇÃO DE CONQUISTAS
+// 9. VERIFICAÇÃO DE CONQUISTAS
 // ============================================================
 async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   if (!gamesToCheck?.length) return;
@@ -600,10 +606,10 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   }
 }
 
-console.log('🚀 [12] Funções de conquistas carregadas.');
+console.log('🚀 [11] Funções de conquistas carregadas.');
 
 // ============================================================
-// 11. VERIFICAÇÃO DE NOVOS JOGOS E TAREFAS
+// 10. VERIFICAÇÃO DE NOVOS JOGOS E TAREFAS
 // ============================================================
 async function verificarLancamentosQuero() {
   try {
@@ -819,10 +825,10 @@ async function checkAchievements() {
   }
 }
 
-console.log('🚀 [13] Tarefas periódicas carregadas.');
+console.log('🚀 [12] Tarefas periódicas carregadas.');
 
 // ============================================================
-// 12. CLIENT DISCORD E EVENTOS
+// 11. CLIENT DISCORD
 // ============================================================
 const client = new Client({
   intents: [
@@ -832,19 +838,19 @@ const client = new Client({
   ]
 });
 
-console.log('🚀 [14] Cliente Discord criado.');
+console.log('🚀 [13] Cliente Discord criado.');
 
-// Evento clientReady (substitui ready para evitar aviso)
+// ============================================================
+// 12. EVENTO clientReady
+// ============================================================
 client.once('clientReady', async () => {
-  console.log('✅ Bot online como', client.user.tag);
-  console.log('📋 Canal de banco de dados:', `<#${QUERO_CHANNEL}>`);
+  console.log(`✅ Bot online como ${client.user.tag}`);
+  console.log(`📋 Banco de dados armazenado como anexo no canal: <#${QUERO_CHANNEL}>`);
 
   try {
-    console.log('🔄 Inicializando banco de dados...');
     await inicializarDB();
-    console.log('✅ Banco de dados inicializado.');
 
-    console.log('🔄 Atualizando ranking...');
+    // Atualiza ranking se necessário
     if (db.rankingVersion < RANKING_VERSION) {
       for (const [steamId, jogos] of Object.entries(RANKING_VALUES)) {
         const member = MEMBROS[steamId];
@@ -864,8 +870,9 @@ client.once('clientReady', async () => {
       await enviarRanking();
     }
 
-    console.log('🔄 Inicializando histórico de jogos...');
+    // Inicializa histórico se vazio
     if (Object.keys(db.historicoJogos).length === 0) {
+      console.log('🔄 Criando histórico inicial de jogos...');
       for (const steamId of STEAM_IDS_ARRAY) {
         try {
           const games = await getOwnedGames(steamId);
@@ -876,6 +883,7 @@ client.once('clientReady', async () => {
       await salvarDBNoCanal();
     }
 
+    // Registra comandos
     console.log('🔄 Registrando comandos...');
     try {
       const commands = [
@@ -893,6 +901,7 @@ client.once('clientReady', async () => {
       console.error('❌ Erro ao registrar comandos:', err);
     }
 
+    // Inicia tarefas
     console.log('🔄 Iniciando tarefas periódicas...');
     setInterval(checkAchievements, 30000);
     setInterval(checkNewGames, 300000);
@@ -902,7 +911,7 @@ client.once('clientReady', async () => {
 
     try {
       const dono = await client.users.fetch(DONO_ID);
-      await dono.send('🚀 Bot Steam Família está online! Todos os dados salvos no canal privado.');
+      await dono.send('🚀 Bot Steam Família está online! Banco de dados salvo como anexo no canal privado.');
     } catch (_) {}
   } catch (err) {
     console.error('❌ ERRO FATAL NO EVENTO clientReady:', err);
@@ -911,7 +920,7 @@ client.once('clientReady', async () => {
 });
 
 // ============================================================
-// 13. COMANDOS SLASH
+// 13. COMANDOS SLASH (MANTIDOS IGUAIS)
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -1056,7 +1065,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ ephemeral: true });
     const totalQuero = (await loadQueroList(interaction.user.id)).length;
     const totalConquistas = Object.values(db.conquistas || {}).reduce((acc, obj) => acc + Object.keys(obj || {}).length, 0);
-    const msg = `📊 **Status do DB:**\n📋 /quero: ${totalQuero} jogos (armazenado no canal)\n🏆 Conquistas rastreadas: ${totalConquistas}\n👥 Membros: ${Object.keys(db.ranking || {}).length}\n💾 Banco de dados salvo no canal <#${QUERO_CHANNEL}>`;
+    const msg = `📊 **Status do DB:**\n📋 /quero: ${totalQuero} jogos (canal privado)\n🏆 Conquistas rastreadas: ${totalConquistas}\n👥 Membros: ${Object.keys(db.ranking || {}).length}\n💾 Banco de dados salvo como anexo no canal <#${QUERO_CHANNEL}>`;
     await interaction.editReply(msg);
   }
 });
@@ -1101,4 +1110,3 @@ client.login(DISCORD_TOKEN)
 
 process.on('SIGTERM', () => { process.exit(0); });
 process.on('SIGINT', () => { process.exit(0); });
-  
