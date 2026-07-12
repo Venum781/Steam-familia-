@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - BANCO DE DADOS EM ANEXO (FINAL)
+// BOT STEAM FAMÍLIA - BANCO DE DADOS EM ANEXO (FINAL2)
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
