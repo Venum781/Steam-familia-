@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - DETECÇÃO AUTOMÁTICA EA, ROCKSTAR E UBISOFTt
+// BOT STEAM FAMÍLIA - COM EMOJI PERSONALIZADO NAS CONQUISTAS
 // ============================================================
 
 require('dotenv').config();
@@ -44,8 +44,8 @@ const MEMBROS = {
   '76561198406551864': { nome: 'DollynhoMococa', discordId: '340610951193690113' }
 };
 
-// 🔥 VERSÃO DO RANKING
-const RANKING_VERSION = 7;
+// 🔥 VERSÃO DO RANKING (aumente para forçar atualização)
+const RANKING_VERSION = 5;
 
 // 🔥 VALORES ATUAIS DO RANKING
 const RANKING_VALUES = {
@@ -310,7 +310,7 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
-// 🔥 LISTA MANUAL DE JOGOS INCOMPATÍVEIS (FALLBACK)
+// 🔥 LISTA MANUAL DE JOGOS INCOMPATÍVEIS
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
   107410: "Arma 3",
@@ -347,9 +347,7 @@ const JOGOS_INCOMPATIVEIS = {
   1222700: "A Way Out"
 };
 
-// 🔥 FUNÇÃO PARA VERIFICAR COMPATIBILIDADE (COM DETECÇÃO AUTOMÁTICA EA, ROCKSTAR E UBISOFT)
 async function verificarCompatibilidadeFamilia(appId) {
-  // 1. Verifica na lista manual
   if (JOGOS_INCOMPATIVEIS[appId]) {
     return {
       compatível: false,
@@ -357,14 +355,12 @@ async function verificarCompatibilidadeFamilia(appId) {
     };
   }
 
-  // 2. Busca detalhes do jogo para detectar editor/desenvolvedor
   try {
     const detalhes = await getGameDetails(appId);
     if (detalhes) {
       const publishers = detalhes.publishers || [];
       const developers = detalhes.developers || [];
 
-      // 🔥 DETECÇÃO AUTOMÁTICA DE EA
       const isEA = publishers.some(p => 
         p.toLowerCase().includes('ea ') || 
         p.toLowerCase().includes('electronic arts') ||
@@ -384,35 +380,6 @@ async function verificarCompatibilidadeFamilia(appId) {
         };
       }
 
-      // 🔥 DETECÇÃO AUTOMÁTICA DE ROCKSTAR
-      const isRockstar = publishers.some(p => 
-        p.toLowerCase().includes('rockstar')
-      ) || developers.some(d => 
-        d.toLowerCase().includes('rockstar')
-      );
-
-      if (isRockstar) {
-        return {
-          compatível: false,
-          motivo: 'Jogos da Rockstar Games NÃO são compatíveis com Family Sharing'
-        };
-      }
-
-      // 🔥 DETECÇÃO AUTOMÁTICA DE UBISOFT
-      const isUbisoft = publishers.some(p => 
-        p.toLowerCase().includes('ubisoft')
-      ) || developers.some(d => 
-        d.toLowerCase().includes('ubisoft')
-      );
-
-      if (isUbisoft) {
-        return {
-          compatível: false,
-          motivo: 'Jogos da Ubisoft NÃO são compatíveis com Family Sharing'
-        };
-      }
-
-      // Verifica outras flags
       if (detalhes.is_free) {
         return { compatível: false, motivo: 'Jogo gratuito não requer Family Sharing' };
       }
@@ -431,7 +398,6 @@ async function verificarCompatibilidadeFamilia(appId) {
     console.error(`❌ Erro ao verificar compatibilidade do jogo ${appId}:`, e.message);
   }
   
-  // Fallback: assume compatível se não estiver na lista e não houver erro
   return { compatível: true, motivo: null };
 }
 
@@ -513,7 +479,7 @@ let previousGames = {};
 let ultimaMensagemRankingId = db.ultimaMensagemRankingId || null;
 
 // ============================================================
-// 7. RANKING
+// 7. RANKING (COM NUMERAÇÃO E TOTAL DE JOGOS)
 // ============================================================
 function gerarRankingEmbed() {
   const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
@@ -579,7 +545,7 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS
+// 8. VERIFICAÇÃO DE CONQUISTAS (COM EMOJI PERSONALIZADO)
 // ============================================================
 async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   if (!gamesToCheck?.length) return;
@@ -1087,7 +1053,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send(`🚀 Bot atualizado! Detecção automática para Rockstar e Ubisoft ativada.`);
+    await dono.send(`🚀 Bot atualizado! Emoji personalizado nas conquistas!`);
   } catch (_) {}
 });
 
