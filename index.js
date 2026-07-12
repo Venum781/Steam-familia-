@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - BANCO DE DADOS EM ANEXO (FINAL2)
+// BOT STEAM FAMÍLIA - COMANDOS SLASH CORRIGIDOS
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
@@ -8,7 +8,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, MessageFlags, AttachmentBuilder } = require('discord.js');
 
 console.log('🚀 [2] Dependências carregadas.');
 
@@ -69,7 +69,7 @@ const ACHIEVEMENT_EMOJI = '<:Trofeu:1525724119142891571>';
 console.log('🚀 [5] Constantes definidas.');
 
 // ============================================================
-// 4. BANCO DE DADOS (ARMAZENADO COMO ANEXO)
+// 4. BANCO DE DADOS (ARMAZENADO COMO ANEXO NO CANAL)
 // ============================================================
 let db = null;
 let dbMessageId = null;
@@ -98,7 +98,6 @@ function criarDBInicial() {
   };
 }
 
-// 🔥 CARREGA O BANCO DO ANEXO NO CANAL
 async function carregarDBDoCanal() {
   const channel = client.channels.cache.get(QUERO_CHANNEL);
   if (!channel) {
@@ -107,14 +106,13 @@ async function carregarDBDoCanal() {
   }
   try {
     const messages = await channel.messages.fetch({ limit: 50 });
-    // Procura mensagem com anexo e que tenha o conteúdo "DB_FILE"
-    const dbMsg = messages.find(m => m.attachments.size > 0 && m.content === 'DB_FILE');
+    const dbMsg = messages.find(m => m.content === 'DB_FILE' && m.attachments.size > 0);
     if (dbMsg) {
       dbMessageId = dbMsg.id;
       const attachment = dbMsg.attachments.first();
       if (attachment && attachment.url) {
         const response = await axios.get(attachment.url, { responseType: 'json' });
-        console.log('✅ Banco de dados carregado do anexo.');
+        console.log('✅ Banco de dados carregado do anexo do canal.');
         return response.data;
       }
     }
@@ -124,7 +122,6 @@ async function carregarDBDoCanal() {
   return null;
 }
 
-// 🔥 SALVA O BANCO COMO ANEXO (APAGA O ANTIGO E ENVIA NOVO)
 async function salvarDBNoCanal() {
   const channel = client.channels.cache.get(QUERO_CHANNEL);
   if (!channel) {
@@ -132,25 +129,20 @@ async function salvarDBNoCanal() {
     return false;
   }
   try {
-    // Apaga a mensagem antiga, se existir
     if (dbMessageId) {
       try {
         const antiga = await channel.messages.fetch(dbMessageId);
         if (antiga) await antiga.delete();
-        console.log('🗑️ Mensagem antiga removida.');
       } catch (_) {}
     }
-    // Cria o buffer do JSON
     const jsonData = JSON.stringify(db, null, 2);
     const buffer = Buffer.from(jsonData, 'utf-8');
     const attachment = new AttachmentBuilder(buffer, { name: 'db.json' });
-    // Envia a nova mensagem com o anexo
     const novaMsg = await channel.send({
       content: 'DB_FILE',
       files: [attachment]
     });
     dbMessageId = novaMsg.id;
-    console.log('💾 Banco de dados salvo como anexo.');
     return true;
   } catch (e) {
     console.error('❌ Erro ao salvar banco no anexo:', e);
@@ -158,7 +150,6 @@ async function salvarDBNoCanal() {
   }
 }
 
-// 🔥 INICIALIZA O BANCO
 async function inicializarDB() {
   const dados = await carregarDBDoCanal();
   if (dados) {
@@ -187,11 +178,11 @@ async function inicializarDB() {
       db.rankingVersion = RANKING_VERSION;
       await salvarDBNoCanal();
     }
-    console.log(`💾 Banco de dados carregado (versão ${db.rankingVersion})`);
+    console.log(`💾 Banco de dados carregado do anexo (versão ${db.rankingVersion})`);
   } else {
     db = criarDBInicial();
     await salvarDBNoCanal();
-    console.log('📊 Banco de dados inicial criado como anexo.');
+    console.log('📊 Banco de dados inicial criado como anexo no canal.');
   }
 }
 
@@ -267,7 +258,7 @@ async function listarQuero(discordId) {
 console.log('🚀 [7] Funções /quero carregadas.');
 
 // ============================================================
-// 6. FUNÇÕES DA STEAM API
+// 6. FUNÇÕES DA STEAM API (MANTIDAS IGUAIS – RESUMIDAS)
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -853,7 +844,6 @@ client.once('clientReady', async () => {
   try {
     await inicializarDB();
 
-    // Atualiza ranking se necessário
     if (db.rankingVersion < RANKING_VERSION) {
       for (const [steamId, jogos] of Object.entries(RANKING_VALUES)) {
         const member = MEMBROS[steamId];
@@ -873,7 +863,6 @@ client.once('clientReady', async () => {
       await enviarRanking();
     }
 
-    // Inicializa histórico se vazio
     if (Object.keys(db.historicoJogos).length === 0) {
       console.log('🔄 Criando histórico inicial de jogos...');
       for (const steamId of STEAM_IDS_ARRAY) {
@@ -886,7 +875,6 @@ client.once('clientReady', async () => {
       await salvarDBNoCanal();
     }
 
-    // Registra comandos
     console.log('🔄 Registrando comandos...');
     try {
       const commands = [
@@ -904,7 +892,6 @@ client.once('clientReady', async () => {
       console.error('❌ Erro ao registrar comandos:', err);
     }
 
-    // Inicia tarefas
     console.log('🔄 Iniciando tarefas periódicas...');
     setInterval(checkAchievements, 30000);
     setInterval(checkNewGames, 300000);
@@ -923,14 +910,14 @@ client.once('clientReady', async () => {
 });
 
 // ============================================================
-// 13. COMANDOS SLASH
+// 13. COMANDOS SLASH (CORRIGIDOS)
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   // /tem
   if (interaction.commandName === 'tem') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const input = interaction.options.getString('jogo');
       let info = null;
@@ -973,13 +960,13 @@ client.on('interactionCreate', async (interaction) => {
 
   // /ranking
   if (interaction.commandName === 'ranking') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await interaction.editReply({ embeds: [gerarRankingEmbed()] });
   }
 
   // /quero
   if (interaction.commandName === 'quero') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const input = interaction.options.getString('jogo');
       let info = null;
@@ -1025,9 +1012,9 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /quero-listar
+  // /quero-listar (CORRIGIDO – sem footer vazio)
   if (interaction.commandName === 'quero-listar') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const lista = await listarQuero(interaction.user.id);
     if (!lista.length) {
       await interaction.editReply('📭 Sua lista /quero está vazia.');
@@ -1036,14 +1023,19 @@ client.on('interactionCreate', async (interaction) => {
     const embed = new EmbedBuilder()
       .setColor(0x00AE86)
       .setTitle(`📋 Sua lista /quero (${lista.length} jogos)`)
-      .setDescription(lista.slice(0, 20).map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n'))
-      .setFooter({ text: lista.length > 20 ? `Mostrando 20 de ${lista.length}` : '' });
+      .setDescription(lista.slice(0, 20).map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n'));
+    
+    // Só adiciona footer se houver mais de 20 jogos
+    if (lista.length > 20) {
+      embed.setFooter({ text: `Mostrando 20 de ${lista.length}` });
+    }
+    
     await interaction.editReply({ embeds: [embed] });
   }
 
   // /quero-remover
   if (interaction.commandName === 'quero-remover') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const input = interaction.options.getString('jogo');
       const info = await searchGameOnSteam(input);
@@ -1062,10 +1054,10 @@ client.on('interactionCreate', async (interaction) => {
   // /dbstatus
   if (interaction.commandName === 'dbstatus') {
     if (interaction.user.id !== DONO_ID) {
-      await interaction.reply({ content: '❌ Apenas o dono.', ephemeral: true });
+      await interaction.reply({ content: '❌ Apenas o dono.', flags: MessageFlags.Ephemeral });
       return;
     }
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const totalQuero = (await loadQueroList(interaction.user.id)).length;
     const totalConquistas = Object.values(db.conquistas || {}).reduce((acc, obj) => acc + Object.keys(obj || {}).length, 0);
     const msg = `📊 **Status do DB:**\n📋 /quero: ${totalQuero} jogos (canal privado)\n🏆 Conquistas rastreadas: ${totalConquistas}\n👥 Membros: ${Object.keys(db.ranking || {}).length}\n💾 Banco de dados salvo como anexo no canal <#${QUERO_CHANNEL}>`;
