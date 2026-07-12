@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - BANCO DE DADOS EM ANEXO (CANAL PRIVADO)
+// BOT STEAM FAMÍLIA - BANCO DE DADOS EM ANEXO (FINAL)
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
@@ -69,7 +69,7 @@ const ACHIEVEMENT_EMOJI = '<:Trofeu:1525724119142891571>';
 console.log('🚀 [5] Constantes definidas.');
 
 // ============================================================
-// 4. BANCO DE DADOS (ARMAZENADO COMO ANEXO NO CANAL)
+// 4. BANCO DE DADOS (ARMAZENADO COMO ANEXO)
 // ============================================================
 let db = null;
 let dbMessageId = null;
@@ -107,13 +107,14 @@ async function carregarDBDoCanal() {
   }
   try {
     const messages = await channel.messages.fetch({ limit: 50 });
-    const dbMsg = messages.find(m => m.content === 'DB_FILE' && m.attachments.size > 0);
+    // Procura mensagem com anexo e que tenha o conteúdo "DB_FILE"
+    const dbMsg = messages.find(m => m.attachments.size > 0 && m.content === 'DB_FILE');
     if (dbMsg) {
       dbMessageId = dbMsg.id;
       const attachment = dbMsg.attachments.first();
       if (attachment && attachment.url) {
         const response = await axios.get(attachment.url, { responseType: 'json' });
-        console.log('✅ Banco de dados carregado do anexo do canal.');
+        console.log('✅ Banco de dados carregado do anexo.');
         return response.data;
       }
     }
@@ -123,7 +124,7 @@ async function carregarDBDoCanal() {
   return null;
 }
 
-// 🔥 SALVA O BANCO COMO ANEXO NO CANAL
+// 🔥 SALVA O BANCO COMO ANEXO (APAGA O ANTIGO E ENVIA NOVO)
 async function salvarDBNoCanal() {
   const channel = client.channels.cache.get(QUERO_CHANNEL);
   if (!channel) {
@@ -136,6 +137,7 @@ async function salvarDBNoCanal() {
       try {
         const antiga = await channel.messages.fetch(dbMessageId);
         if (antiga) await antiga.delete();
+        console.log('🗑️ Mensagem antiga removida.');
       } catch (_) {}
     }
     // Cria o buffer do JSON
@@ -148,6 +150,7 @@ async function salvarDBNoCanal() {
       files: [attachment]
     });
     dbMessageId = novaMsg.id;
+    console.log('💾 Banco de dados salvo como anexo.');
     return true;
   } catch (e) {
     console.error('❌ Erro ao salvar banco no anexo:', e);
@@ -184,11 +187,11 @@ async function inicializarDB() {
       db.rankingVersion = RANKING_VERSION;
       await salvarDBNoCanal();
     }
-    console.log(`💾 Banco de dados carregado do anexo (versão ${db.rankingVersion})`);
+    console.log(`💾 Banco de dados carregado (versão ${db.rankingVersion})`);
   } else {
     db = criarDBInicial();
     await salvarDBNoCanal();
-    console.log('📊 Banco de dados inicial criado como anexo no canal.');
+    console.log('📊 Banco de dados inicial criado como anexo.');
   }
 }
 
@@ -920,7 +923,7 @@ client.once('clientReady', async () => {
 });
 
 // ============================================================
-// 13. COMANDOS SLASH (MANTIDOS IGUAIS)
+// 13. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
