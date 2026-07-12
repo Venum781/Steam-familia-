@@ -1,11 +1,10 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM LOGS DE DEPURAÇÃO PARA LOGIN
+// BOT STEAM FAMÍLIA - SEM HEALTH CHECK (APENAS DISCORD)
 // ============================================================
 
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
 const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('discord.js');
 
@@ -20,8 +19,7 @@ const {
   RANKING_CHANNEL_ID,
   ACHIEVEMENT_CHANNEL_ID,
   DONO_ID,
-  DATA_DIR = '/data',
-  PORT = 3000
+  DATA_DIR = '/data'
 } = process.env;
 
 if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID) {
@@ -349,7 +347,6 @@ const JOGOS_INCOMPATIVEIS = {
 
 // 🔥 FUNÇÃO PARA VERIFICAR COMPATIBILIDADE (COM DETECÇÃO AUTOMÁTICA EA, ROCKSTAR E UBISOFT)
 async function verificarCompatibilidadeFamilia(appId) {
-  // 1. Verifica na lista manual
   if (JOGOS_INCOMPATIVEIS[appId]) {
     return {
       compatível: false,
@@ -357,14 +354,12 @@ async function verificarCompatibilidadeFamilia(appId) {
     };
   }
 
-  // 2. Busca detalhes do jogo para detectar editor/desenvolvedor
   try {
     const detalhes = await getGameDetails(appId);
     if (detalhes) {
       const publishers = detalhes.publishers || [];
       const developers = detalhes.developers || [];
 
-      // 🔥 DETECÇÃO AUTOMÁTICA DE EA
       const isEA = publishers.some(p => 
         p.toLowerCase().includes('ea ') || 
         p.toLowerCase().includes('electronic arts') ||
@@ -384,7 +379,6 @@ async function verificarCompatibilidadeFamilia(appId) {
         };
       }
 
-      // 🔥 DETECÇÃO AUTOMÁTICA DE ROCKSTAR
       const isRockstar = publishers.some(p => 
         p.toLowerCase().includes('rockstar')
       ) || developers.some(d => 
@@ -398,7 +392,6 @@ async function verificarCompatibilidadeFamilia(appId) {
         };
       }
 
-      // 🔥 DETECÇÃO AUTOMÁTICA DE UBISOFT
       const isUbisoft = publishers.some(p => 
         p.toLowerCase().includes('ubisoft')
       ) || developers.some(d => 
@@ -412,7 +405,6 @@ async function verificarCompatibilidadeFamilia(appId) {
         };
       }
 
-      // Verifica outras flags
       if (detalhes.is_free) {
         return { compatível: false, motivo: 'Jogo gratuito não requer Family Sharing' };
       }
@@ -431,7 +423,6 @@ async function verificarCompatibilidadeFamilia(appId) {
     console.error(`❌ Erro ao verificar compatibilidade do jogo ${appId}:`, e.message);
   }
   
-  // Fallback: assume compatível se não estiver na lista e não houver erro
   return { compatível: true, motivo: null };
 }
 
@@ -1356,16 +1347,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // ============================================================
-// 17. HEALTH CHECK
-// ============================================================
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
-});
-server.listen(PORT, () => console.log(`✅ Health check na porta ${PORT}`));
-
-// ============================================================
-// 18. LOGIN (COM LOGS DE DEPURAÇÃO)
+// 17. LOGIN (COM LOGS DE DEPURAÇÃO)
 // ============================================================
 console.log('🔑 Tentando login com o token...');
 console.log(`📌 Token presente: ${DISCORD_TOKEN ? 'SIM' : 'NÃO'}`);
