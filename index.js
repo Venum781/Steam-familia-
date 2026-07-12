@@ -1,11 +1,10 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM HEALTHCHECK RESTAURADO
+// BOT STEAM FAMÍLIA - APENAS DISCORD (SEM HEALTH CHECK)
 // ============================================================
 
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
 const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('discord.js');
 
@@ -20,8 +19,7 @@ const {
   RANKING_CHANNEL_ID,
   ACHIEVEMENT_CHANNEL_ID,
   DONO_ID,
-  DATA_DIR = '/data',
-  PORT = 3000
+  DATA_DIR = '/data'
 } = process.env;
 
 if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID) {
@@ -44,7 +42,10 @@ const MEMBROS = {
   '76561198406551864': { nome: 'DollynhoMococa', discordId: '340610951193690113' }
 };
 
+// 🔥 VERSÃO DO RANKING
 const RANKING_VERSION = 7;
+
+// 🔥 VALORES ATUAIS DO RANKING
 const RANKING_VALUES = {
   '76561198127320557': 127,
   '76561197967265286': 127,
@@ -53,6 +54,8 @@ const RANKING_VALUES = {
   '76561198110004039': 12,
   '76561198406551864': 0
 };
+
+// 🔥 EMOJI PERSONALIZADO PARA CONQUISTAS
 const ACHIEVEMENT_EMOJI = '<:Trofeu:1525724119142891571>';
 
 // ============================================================
@@ -149,7 +152,7 @@ function salvarDB(db) {
 let db = carregarDB();
 
 // ============================================================
-// 4. FUNÇÕES DA STEAM API
+// 4. FUNÇÕES DA STEAM API (MANTIDAS IGUAIS)
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -305,6 +308,7 @@ async function getAchievementDisplayName(appId, apiname) {
   return apiname;
 }
 
+// 🔥 LISTA MANUAL DE JOGOS INCOMPATÍVEIS (FALLBACK)
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead",
   107410: "Arma 3",
@@ -341,6 +345,7 @@ const JOGOS_INCOMPATIVEIS = {
   1222700: "A Way Out"
 };
 
+// 🔥 FUNÇÃO PARA VERIFICAR COMPATIBILIDADE
 async function verificarCompatibilidadeFamilia(appId) {
   if (JOGOS_INCOMPATIVEIS[appId]) {
     return {
@@ -1342,24 +1347,11 @@ client.on('messageCreate', async (message) => {
 });
 
 // ============================================================
-// 17. HEALTHCHECK (RESTAURADO)
-// ============================================================
-const server = http.createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
-  } else {
-    res.writeHead(200);
-    res.end('Bot is running!');
-  }
-});
-server.listen(PORT, () => console.log(`✅ Health check na porta ${PORT}`));
-
-// ============================================================
-// 18. LOGIN
+// 17. LOGIN
 // ============================================================
 console.log('🔑 Tentando login com o token...');
 console.log(`📌 Token presente: ${DISCORD_TOKEN ? 'SIM' : 'NÃO'}`);
+console.log(`📌 Primeiros 10 caracteres do token: ${DISCORD_TOKEN ? DISCORD_TOKEN.substring(0, 10) + '...' : 'N/A'}`);
 
 client.login(DISCORD_TOKEN)
   .then(() => console.log('✅ Login bem-sucedido!'))
