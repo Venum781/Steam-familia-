@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - DETECÇÃO AUTOMÁTICA EA, ROCKSTAR E UBISOFT
+// BOT STEAM FAMÍLIA - DETECÇÃO AUTOMÁTICA EA, ROCKSTAR E UBISOFTt
 // ============================================================
 
 require('dotenv').config();
