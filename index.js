@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - RANKING COM NUMERAÇÃO E TOTAL DE JOGOS
+// BOT STEAM FAMÍLIA - COM EMOJI PERSONALIZADO NAS CONQUISTAS
 // ============================================================
 
 require('dotenv').config();
@@ -45,7 +45,7 @@ const MEMBROS = {
 };
 
 // 🔥 VERSÃO DO RANKING (aumente para forçar atualização)
-const RANKING_VERSION = 6;
+const RANKING_VERSION = 5;
 
 // 🔥 VALORES ATUAIS DO RANKING
 const RANKING_VALUES = {
@@ -56,6 +56,9 @@ const RANKING_VALUES = {
   '76561198110004039': 12,
   '76561198406551864': 0
 };
+
+// 🔥 EMOJI PERSONALIZADO PARA CONQUISTAS
+const ACHIEVEMENT_EMOJI = '<:Trofeu:1525724119142891571>';
 
 // ============================================================
 // 3. BANCO DE DADOS PERSISTENTE
@@ -151,7 +154,7 @@ function salvarDB(db) {
 let db = carregarDB();
 
 // ============================================================
-// 4. FUNÇÕES DA STEAM API (MANTIDAS IGUAIS)
+// 4. FUNÇÕES DA STEAM API
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -495,7 +498,6 @@ function gerarRankingEmbed() {
 
   embed.setDescription(desc);
 
-  // 🔥 CALCULA TOTAL DE JOGOS SOMADOS
   const totalJogos = rankingArray.reduce((acc, user) => acc + user.jogos, 0);
   embed.setFooter({ text: `Total de jogos: ${totalJogos} • Atualizado ${new Date().toLocaleTimeString()}` });
 
@@ -543,7 +545,7 @@ async function enviarRanking() {
 }
 
 // ============================================================
-// 8. VERIFICAÇÃO DE CONQUISTAS (PROGRESSO INCREMENTAL)
+// 8. VERIFICAÇÃO DE CONQUISTAS (COM EMOJI PERSONALIZADO)
 // ============================================================
 async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   if (!gamesToCheck?.length) return;
@@ -623,7 +625,7 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
       const nomeBonito = await getAchievementDisplayName(appid, ach.apiname);
       const embed = new EmbedBuilder()
         .setColor(0xFFD700)
-        .setTitle(`🏆 ${userName} desbloqueou uma conquista!`)
+        .setTitle(`${ACHIEVEMENT_EMOJI} ${userName} desbloqueou uma conquista!`)
         .setDescription(`**${nomeBonito}**`)
         .addFields(
           { name: '🎮 Jogo', value: gameName, inline: true },
@@ -1051,7 +1053,7 @@ client.once('ready', async () => {
 
   try {
     const dono = await client.users.fetch(DONO_ID);
-    await dono.send(`🚀 Bot atualizado! Ranking com numeração e total de jogos.`);
+    await dono.send(`🚀 Bot atualizado! Emoji personalizado nas conquistas!`);
   } catch (_) {}
 });
 
