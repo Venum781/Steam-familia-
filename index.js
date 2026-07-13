@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM REGRAS E COMANDOS (CORRIGIDO)
+// BOT STEAM FAMÍLIA - COMPLETO COM ÍCONE DE CONQUISTA
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
@@ -29,6 +29,7 @@ const {
 
 console.log('🚀 [3] Variáveis lidas.');
 console.log(`📌 DISCORD_TOKEN presente: ${DISCORD_TOKEN ? 'SIM' : 'NÃO'}`);
+console.log(`📌 QUERO_CHANNEL_ID: ${QUERO_CHANNEL_ID || 'NÃO DEFINIDO'}`);
 console.log(`📌 RULES_CHANNEL_ID: ${RULES_CHANNEL_ID || 'NÃO DEFINIDO'}`);
 
 if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID || !QUERO_CHANNEL_ID || !RULES_CHANNEL_ID) {
@@ -533,7 +534,7 @@ async function enviarRanking() {
 console.log('🚀 [10] Funções de ranking carregadas.');
 
 // ============================================================
-// 9. ENVIO DE REGRAS E COMANDOS (CORRIGIDO)
+// 9. ENVIO DE REGRAS (APENAS SE NÃO EXISTIR)
 // ============================================================
 async function enviarRegras() {
   const channel = client.channels.cache.get(RULES_CHANNEL);
@@ -542,14 +543,10 @@ async function enviarRegras() {
     return;
   }
 
-  // Verifica se já existe uma mensagem de regras do bot no canal
+  // Verifica se já existe uma mensagem de regras do bot
   try {
-    const messages = await channel.messages.fetch({ limit: 50 });
-    const rulesMsg = messages.find(m => 
-      m.author.id === client.user.id && 
-      m.embeds.length > 0 && 
-      m.embeds[0]?.title?.includes('REGRAS DO SERVIDOR')
-    );
+    const messages = await channel.messages.fetch({ limit: 10 });
+    const rulesMsg = messages.find(m => m.author.id === client.user.id && m.content.includes('📜 REGRAS DO SERVIDOR'));
     if (rulesMsg) {
       console.log('📜 Mensagem de regras já existe. Pulando envio.');
       return;
@@ -562,7 +559,6 @@ async function enviarRegras() {
     .setThumbnail('https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/1200px-Steam_icon_logo.svg.png')
     .setDescription(
       '**Bem-vindo à Família Steam!** 🎮\n\n' +
-      'Para manter a harmonia e diversão, siga estas regras:\n\n' +
       '**📌 REGRAS GERAIS**\n' +
       '1️⃣ **Respeito acima de tudo** – Nada de ofensas, discurso de ódio ou assédio.\n' +
       '2️⃣ **Sem spam ou flood** – Evite enviar mensagens repetitivas ou conteúdo irrelevante.\n' +
@@ -602,7 +598,7 @@ async function enviarRegras() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE CONQUISTAS
+// 10. VERIFICAÇÃO DE CONQUISTAS (COM ÍCONE DA CONQUISTA)
 // ============================================================
 async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   if (!gamesToCheck?.length) return;
@@ -651,6 +647,10 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
       const progressoAtual = totalAntigo + contador;
       const progresso = `${progressoAtual}/${totalJogo}`;
       const nomeBonito = await getAchievementDisplayName(appid, ach.apiname);
+
+      // 🔥 CONSTRÓI A URL DO ÍCONE DA CONQUISTA
+      const iconUrl = ach.icon ? `https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/${appid}/${ach.icon}.jpg` : null;
+
       const embed = new EmbedBuilder()
         .setColor(0xFFD700)
         .setTitle(`${ACHIEVEMENT_EMOJI} ${userName} desbloqueou uma conquista!`)
@@ -662,8 +662,16 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
         )
         .setFooter({ text: `+${novas.length} nova(s) conquista(s)` })
         .setTimestamp();
+
+      // 🔥 EXIBE O ÍCONE DA CONQUISTA
+      if (iconUrl) {
+        embed.setImage(iconUrl);
+      }
+
+      // Também exibe a capa do jogo como thumbnail (opcional)
       const detalhes = await getGameDetails(appid);
       if (detalhes?.header_image) embed.setThumbnail(detalhes.header_image);
+
       await channel.send({ embeds: [embed] });
     }
     db.conquistas[steamId][appid] = { total, nomes: desbloqueadas.map(c => c.apiname), totalJogo };
@@ -947,7 +955,7 @@ client.once('clientReady', async () => {
       await salvarDBNoCanal();
     }
 
-    // Envia as regras
+    // Envia regras apenas se não houver mensagem de regras no canal
     await enviarRegras();
 
     // Registra comandos
@@ -979,7 +987,7 @@ client.once('clientReady', async () => {
 
     try {
       const dono = await client.users.fetch(DONO_ID);
-      await dono.send('🚀 Bot Steam Família está online! Regras enviadas no canal #regras.');
+      await dono.send('🚀 Bot Steam Família está online! Ícone de conquistas ativado.');
     } catch (_) {}
   } catch (err) {
     console.error('❌ ERRO FATAL NO EVENTO clientReady:', err);
@@ -1095,22 +1103,52 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply({ ephemeral: true });
     try {
       const lista = await listarQuero(interaction.user.id);
-      if (!lista.length) {
+      if (!lista || !Array.isArray(lista) || lista.length === 0) {
         await interaction.editReply('📭 Sua lista /quero está vazia.');
         return;
       }
+
+      const jogosExibir = lista.slice(0, 20);
+      const totalJogos = lista.length;
+
+      let descricao = jogosExibir
+        .filter(j => j && j.nome && j.link)
+        .map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`)
+        .join('\n');
+
+      if (!descricao) {
+        await interaction.editReply('📭 Sua lista /quero contém dados inválidos.');
+        return;
+      }
+
+      if (descricao.length > 4000) {
+        descricao = descricao.substring(0, 4000) + '\n... (lista truncada)';
+      }
+
       const embed = new EmbedBuilder()
         .setColor(0x00AE86)
-        .setTitle(`📋 Sua lista /quero (${lista.length} jogos)`)
-        .setDescription(lista.slice(0, 20).map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n'));
-      // Só adiciona footer se houver mais de 20 jogos
-      if (lista.length > 20) {
-        embed.setFooter({ text: `Mostrando 20 de ${lista.length}` });
+        .setTitle(`📋 Sua lista /quero (${totalJogos} jogos)`)
+        .setDescription(descricao);
+
+      // SÓ ADICIONA FOOTER SE HOUVER TEXTO
+      if (totalJogos > 20) {
+        embed.setFooter({ text: `Mostrando 20 de ${totalJogos}` });
       }
+
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
       console.error('❌ Erro no /quero-listar:', err);
-      await interaction.editReply('❌ Erro ao listar seus jogos. Tente novamente.');
+      try {
+        const lista = await listarQuero(interaction.user.id);
+        if (lista && lista.length) {
+          const texto = lista.map((j, i) => `${i+1}. ${j.nome} - ${j.link}`).join('\n');
+          await interaction.editReply(`📋 **Sua lista /quero (${lista.length} jogos)**\n\`\`\`\n${texto.substring(0, 1900)}\n\`\`\``);
+        } else {
+          await interaction.editReply('❌ Erro ao listar. Tente novamente.');
+        }
+      } catch (_) {
+        await interaction.editReply('❌ Erro ao listar seus jogos. Tente novamente.');
+      }
     }
   }
 
