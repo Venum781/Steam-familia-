@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COMANDOS SLASH CORRIGIDOS
+// BOT STEAM FAMÍLIA - COM REGRAS E COMANDOS
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
@@ -8,7 +8,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, MessageFlags, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder } = require('discord.js');
 
 console.log('🚀 [2] Dependências carregadas.');
 
@@ -23,20 +23,22 @@ const {
   RANKING_CHANNEL_ID,
   ACHIEVEMENT_CHANNEL_ID,
   QUERO_CHANNEL_ID,
+  RULES_CHANNEL_ID,
   DONO_ID
 } = process.env;
 
 console.log('🚀 [3] Variáveis lidas.');
 console.log(`📌 DISCORD_TOKEN presente: ${DISCORD_TOKEN ? 'SIM' : 'NÃO'}`);
-console.log(`📌 QUERO_CHANNEL_ID: ${QUERO_CHANNEL_ID || 'NÃO DEFINIDO'}`);
+console.log(`📌 RULES_CHANNEL_ID: ${RULES_CHANNEL_ID || 'NÃO DEFINIDO'}`);
 
-if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID || !QUERO_CHANNEL_ID) {
+if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID || !QUERO_CHANNEL_ID || !RULES_CHANNEL_ID) {
   console.error('❌ Variáveis obrigatórias ausentes. Verifique .env');
   process.exit(1);
 }
 
 const STEAM_IDS_ARRAY = STEAM_IDS.split(',').map(id => id.trim());
 const QUERO_CHANNEL = QUERO_CHANNEL_ID;
+const RULES_CHANNEL = RULES_CHANNEL_ID;
 
 // ============================================================
 // 2. MAPEAMENTO DOS MEMBROS
@@ -69,7 +71,7 @@ const ACHIEVEMENT_EMOJI = '<:Trofeu:1525724119142891571>';
 console.log('🚀 [5] Constantes definidas.');
 
 // ============================================================
-// 4. BANCO DE DADOS (ARMAZENADO COMO ANEXO NO CANAL)
+// 4. BANCO DE DADOS (ANEXO NO CANAL PRIVADO)
 // ============================================================
 let db = null;
 let dbMessageId = null;
@@ -189,7 +191,7 @@ async function inicializarDB() {
 console.log('🚀 [6] Funções de banco de dados (anexo) definidas.');
 
 // ============================================================
-// 5. FUNÇÕES DE LISTA /quero (NO CANAL PRIVADO – TEXTO)
+// 5. FUNÇÕES DE LISTA /quero
 // ============================================================
 async function getQueroMessage(discordId) {
   const channel = client.channels.cache.get(QUERO_CHANNEL);
@@ -258,7 +260,7 @@ async function listarQuero(discordId) {
 console.log('🚀 [7] Funções /quero carregadas.');
 
 // ============================================================
-// 6. FUNÇÕES DA STEAM API (MANTIDAS IGUAIS – RESUMIDAS)
+// 6. FUNÇÕES DA STEAM API
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -531,7 +533,72 @@ async function enviarRanking() {
 console.log('🚀 [10] Funções de ranking carregadas.');
 
 // ============================================================
-// 9. VERIFICAÇÃO DE CONQUISTAS
+// 9. ENVIO DE REGRAS E COMANDOS
+// ============================================================
+async function enviarRegras() {
+  const channel = client.channels.cache.get(RULES_CHANNEL);
+  if (!channel) {
+    console.error('❌ Canal de regras não encontrado!');
+    return;
+  }
+
+  // Verifica se já existe uma mensagem de regras no canal
+  try {
+    const messages = await channel.messages.fetch({ limit: 10 });
+    const rulesMsg = messages.find(m => m.author.id === client.user.id && m.content.includes('📜 REGRAS DO SERVIDOR'));
+    if (rulesMsg) {
+      console.log('📜 Mensagem de regras já existe. Pulando envio.');
+      return;
+    }
+  } catch (_) {}
+
+  const embed = new EmbedBuilder()
+    .setColor(0x00AE86)
+    .setTitle('📜 REGRAS DO SERVIDOR')
+    .setThumbnail('https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/1200px-Steam_icon_logo.svg.png')
+    .setDescription(
+      '**Bem-vindo à Família Steam!** 🎮\n\n' +
+      'Para manter a harmonia e diversão, siga estas regras:\n\n' +
+      '**📌 REGRAS GERAIS**\n' +
+      '1️⃣ **Respeito acima de tudo** – Nada de ofensas, discurso de ódio ou assédio.\n' +
+      '2️⃣ **Sem spam ou flood** – Evite enviar mensagens repetitivas ou conteúdo irrelevante.\n' +
+      '3️⃣ **Conteúdo apropriado** – Nada de NSFW, gore ou material impróprio.\n' +
+      '4️⃣ **Divulgação proibida** – Não divulgue outros servidores, produtos ou serviços sem permissão.\n' +
+      '5️⃣ **Use os canais certos** – Cada canal tem um propósito. Respeite as categorias.\n' +
+      '6️⃣ **Seja ativo e participe** – A família cresce com a interação de todos!\n\n' +
+      '**🤖 COMANDOS DISPONÍVEIS**\n' +
+      '`/tem [jogo]` – Verifica se um jogo está na biblioteca da família.\n' +
+      '`/ranking` – Mostra o ranking de jogos da família.\n' +
+      '`/quero [jogo]` – Adiciona um jogo à sua lista de desejos.\n' +
+      '`/quero-listar` – Lista os jogos da sua lista /quero.\n' +
+      '`/quero-remover [jogo]` – Remove um jogo da sua lista /quero.\n' +
+      '`/dbstatus` – Status do banco de dados (apenas dono).\n' +
+      '`/regras` – Exibe esta mensagem novamente.\n\n' +
+      '**🔔 NOTIFICAÇÕES**\n' +
+      '• 🆕 Novos jogos compatíveis são anunciados com `@everyone`.\n' +
+      '• 🏆 Conquistas são monitoradas e notificadas no canal de conquistas.\n' +
+      '• 📢 Lançamentos e promoções de jogos da sua lista `/quero` são enviados por DM.\n\n' +
+      '**📌 CANAIS IMPORTANTES**\n' +
+      `• 📢 **Notificações:** <#${CHANNEL_ID}>\n` +
+      `• 🏆 **Conquistas:** <#${ACHIEVEMENT_CHANNEL_ID}>\n` +
+      `• 📋 **Ranking:** <#${RANKING_CHANNEL_ID}>\n` +
+      `• 📜 **Regras:** <#${RULES_CHANNEL}>\n\n` +
+      '**✅ REGRAS SUJEITAS A MUDANÇAS** – A administração pode atualizar as regras a qualquer momento.\n' +
+      '**Divirta-se e bem-vindo à família!** 🚀'
+    )
+    .setTimestamp()
+    .setFooter({ text: 'Steam Família - Regras e Comandos', iconURL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/1200px-Steam_icon_logo.svg.png' });
+
+  try {
+    await channel.send({ embeds: [embed] });
+    console.log('📜 Mensagem de regras enviada no canal:', RULES_CHANNEL);
+  } catch (err) {
+    console.error('❌ Erro ao enviar regras:', err);
+  }
+}
+
+// ============================================================
+// 10. VERIFICAÇÃO DE CONQUISTAS
 // ============================================================
 async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   if (!gamesToCheck?.length) return;
@@ -600,10 +667,8 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   }
 }
 
-console.log('🚀 [11] Funções de conquistas carregadas.');
-
 // ============================================================
-// 10. VERIFICAÇÃO DE NOVOS JOGOS E TAREFAS
+// 11. VERIFICAÇÃO DE NOVOS JOGOS E TAREFAS
 // ============================================================
 async function verificarLancamentosQuero() {
   try {
@@ -819,10 +884,10 @@ async function checkAchievements() {
   }
 }
 
-console.log('🚀 [12] Tarefas periódicas carregadas.');
+console.log('🚀 [11] Tarefas periódicas carregadas.');
 
 // ============================================================
-// 11. CLIENT DISCORD
+// 12. CLIENT DISCORD
 // ============================================================
 const client = new Client({
   intents: [
@@ -832,18 +897,20 @@ const client = new Client({
   ]
 });
 
-console.log('🚀 [13] Cliente Discord criado.');
+console.log('🚀 [12] Cliente Discord criado.');
 
 // ============================================================
-// 12. EVENTO clientReady
+// 13. EVENTO clientReady
 // ============================================================
 client.once('clientReady', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   console.log(`📋 Banco de dados armazenado como anexo no canal: <#${QUERO_CHANNEL}>`);
+  console.log(`📜 Canal de regras: <#${RULES_CHANNEL}>`);
 
   try {
     await inicializarDB();
 
+    // Atualiza ranking se necessário
     if (db.rankingVersion < RANKING_VERSION) {
       for (const [steamId, jogos] of Object.entries(RANKING_VALUES)) {
         const member = MEMBROS[steamId];
@@ -863,6 +930,7 @@ client.once('clientReady', async () => {
       await enviarRanking();
     }
 
+    // Inicializa histórico se vazio
     if (Object.keys(db.historicoJogos).length === 0) {
       console.log('🔄 Criando histórico inicial de jogos...');
       for (const steamId of STEAM_IDS_ARRAY) {
@@ -875,6 +943,10 @@ client.once('clientReady', async () => {
       await salvarDBNoCanal();
     }
 
+    // 🔥 ENVIA AS REGRAS NO CANAL DE REGRAS
+    await enviarRegras();
+
+    // Registra comandos
     console.log('🔄 Registrando comandos...');
     try {
       const commands = [
@@ -883,7 +955,8 @@ client.once('clientReady', async () => {
         { name: 'quero', description: 'Adiciona um jogo à sua lista de desejos', options: [{ name: 'jogo', description: 'Nome do jogo ou link da Steam', type: 3, required: true }] },
         { name: 'quero-listar', description: 'Lista os jogos da sua lista /quero' },
         { name: 'quero-remover', description: 'Remove um jogo da sua lista /quero', options: [{ name: 'jogo', description: 'Nome do jogo para remover', type: 3, required: true }] },
-        { name: 'dbstatus', description: '[DONO] Status do banco de dados' }
+        { name: 'dbstatus', description: '[DONO] Status do banco de dados' },
+        { name: 'regras', description: 'Mostra as regras e comandos do servidor' }
       ];
       const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
       await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
@@ -892,6 +965,7 @@ client.once('clientReady', async () => {
       console.error('❌ Erro ao registrar comandos:', err);
     }
 
+    // Inicia tarefas
     console.log('🔄 Iniciando tarefas periódicas...');
     setInterval(checkAchievements, 30000);
     setInterval(checkNewGames, 300000);
@@ -901,7 +975,7 @@ client.once('clientReady', async () => {
 
     try {
       const dono = await client.users.fetch(DONO_ID);
-      await dono.send('🚀 Bot Steam Família está online! Banco de dados salvo como anexo no canal privado.');
+      await dono.send('🚀 Bot Steam Família está online! Regras enviadas no canal #regras.');
     } catch (_) {}
   } catch (err) {
     console.error('❌ ERRO FATAL NO EVENTO clientReady:', err);
@@ -910,14 +984,14 @@ client.once('clientReady', async () => {
 });
 
 // ============================================================
-// 13. COMANDOS SLASH (CORRIGIDOS)
+// 14. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   // /tem
   if (interaction.commandName === 'tem') {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
     try {
       const input = interaction.options.getString('jogo');
       let info = null;
@@ -960,13 +1034,13 @@ client.on('interactionCreate', async (interaction) => {
 
   // /ranking
   if (interaction.commandName === 'ranking') {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
     await interaction.editReply({ embeds: [gerarRankingEmbed()] });
   }
 
   // /quero
   if (interaction.commandName === 'quero') {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
     try {
       const input = interaction.options.getString('jogo');
       let info = null;
@@ -1012,9 +1086,9 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /quero-listar (CORRIGIDO – sem footer vazio)
+  // /quero-listar
   if (interaction.commandName === 'quero-listar') {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
     const lista = await listarQuero(interaction.user.id);
     if (!lista.length) {
       await interaction.editReply('📭 Sua lista /quero está vazia.');
@@ -1023,19 +1097,14 @@ client.on('interactionCreate', async (interaction) => {
     const embed = new EmbedBuilder()
       .setColor(0x00AE86)
       .setTitle(`📋 Sua lista /quero (${lista.length} jogos)`)
-      .setDescription(lista.slice(0, 20).map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n'));
-    
-    // Só adiciona footer se houver mais de 20 jogos
-    if (lista.length > 20) {
-      embed.setFooter({ text: `Mostrando 20 de ${lista.length}` });
-    }
-    
+      .setDescription(lista.slice(0, 20).map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n'))
+      .setFooter({ text: lista.length > 20 ? `Mostrando 20 de ${lista.length}` : '' });
     await interaction.editReply({ embeds: [embed] });
   }
 
   // /quero-remover
   if (interaction.commandName === 'quero-remover') {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
     try {
       const input = interaction.options.getString('jogo');
       const info = await searchGameOnSteam(input);
@@ -1054,19 +1123,66 @@ client.on('interactionCreate', async (interaction) => {
   // /dbstatus
   if (interaction.commandName === 'dbstatus') {
     if (interaction.user.id !== DONO_ID) {
-      await interaction.reply({ content: '❌ Apenas o dono.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: '❌ Apenas o dono.', ephemeral: true });
       return;
     }
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
     const totalQuero = (await loadQueroList(interaction.user.id)).length;
     const totalConquistas = Object.values(db.conquistas || {}).reduce((acc, obj) => acc + Object.keys(obj || {}).length, 0);
     const msg = `📊 **Status do DB:**\n📋 /quero: ${totalQuero} jogos (canal privado)\n🏆 Conquistas rastreadas: ${totalConquistas}\n👥 Membros: ${Object.keys(db.ranking || {}).length}\n💾 Banco de dados salvo como anexo no canal <#${QUERO_CHANNEL}>`;
     await interaction.editReply(msg);
   }
+
+  // /regras
+  if (interaction.commandName === 'regras') {
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      // Envia as regras novamente no canal onde o comando foi executado
+      const embed = new EmbedBuilder()
+        .setColor(0x00AE86)
+        .setTitle('📜 REGRAS DO SERVIDOR')
+        .setThumbnail('https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/1200px-Steam_icon_logo.svg.png')
+        .setDescription(
+          '**Bem-vindo à Família Steam!** 🎮\n\n' +
+          '**📌 REGRAS GERAIS**\n' +
+          '1️⃣ **Respeito acima de tudo** – Nada de ofensas, discurso de ódio ou assédio.\n' +
+          '2️⃣ **Sem spam ou flood** – Evite enviar mensagens repetitivas ou conteúdo irrelevante.\n' +
+          '3️⃣ **Conteúdo apropriado** – Nada de NSFW, gore ou material impróprio.\n' +
+          '4️⃣ **Divulgação proibida** – Não divulgue outros servidores, produtos ou serviços sem permissão.\n' +
+          '5️⃣ **Use os canais certos** – Cada canal tem um propósito. Respeite as categorias.\n' +
+          '6️⃣ **Seja ativo e participe** – A família cresce com a interação de todos!\n\n' +
+          '**🤖 COMANDOS DISPONÍVEIS**\n' +
+          '`/tem [jogo]` – Verifica se um jogo está na biblioteca da família.\n' +
+          '`/ranking` – Mostra o ranking de jogos da família.\n' +
+          '`/quero [jogo]` – Adiciona um jogo à sua lista de desejos.\n' +
+          '`/quero-listar` – Lista os jogos da sua lista /quero.\n' +
+          '`/quero-remover [jogo]` – Remove um jogo da sua lista /quero.\n' +
+          '`/dbstatus` – Status do banco de dados (apenas dono).\n' +
+          '`/regras` – Exibe esta mensagem novamente.\n\n' +
+          '**🔔 NOTIFICAÇÕES**\n' +
+          '• 🆕 Novos jogos compatíveis são anunciados com `@everyone`.\n' +
+          '• 🏆 Conquistas são monitoradas e notificadas no canal de conquistas.\n' +
+          '• 📢 Lançamentos e promoções de jogos da sua lista `/quero` são enviados por DM.\n\n' +
+          '**📌 CANAIS IMPORTANTES**\n' +
+          `• 📢 **Notificações:** <#${CHANNEL_ID}>\n` +
+          `• 🏆 **Conquistas:** <#${ACHIEVEMENT_CHANNEL_ID}>\n` +
+          `• 📋 **Ranking:** <#${RANKING_CHANNEL_ID}>\n` +
+          `• 📜 **Regras:** <#${RULES_CHANNEL}>\n\n` +
+          '**✅ REGRAS SUJEITAS A MUDANÇAS** – A administração pode atualizar as regras a qualquer momento.\n' +
+          '**Divirta-se e bem-vindo à família!** 🚀'
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Steam Família - Regras e Comandos', iconURL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/1200px-Steam_icon_logo.svg.png' });
+
+      await interaction.editReply({ embeds: [embed] });
+    } catch (err) {
+      await interaction.editReply(`❌ Erro: ${err.message}`);
+    }
+  }
 });
 
 // ============================================================
-// 14. !resetranking
+// 15. !resetranking
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.author.id !== DONO_ID) return;
@@ -1093,7 +1209,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // ============================================================
-// 15. LOGIN
+// 16. LOGIN
 // ============================================================
 console.log('🔑 Tentando login...');
 client.login(DISCORD_TOKEN)
