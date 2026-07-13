@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - ÍCONES DE CONQUISTA CORRIGIDOS
+// BOT STEAM FAMÍLIA - SEM ENVIO AUTOMÁTICO DE REGRAS
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
@@ -534,7 +534,7 @@ async function enviarRanking() {
 console.log('🚀 [10] Funções de ranking carregadas.');
 
 // ============================================================
-// 9. FUNÇÃO DE REGRAS
+// 9. FUNÇÃO DE REGRAS (APENAS PARA O COMANDO /regras)
 // ============================================================
 async function enviarRegras() {
   const channel = client.channels.cache.get(RULES_CHANNEL);
@@ -588,7 +588,7 @@ async function enviarRegras() {
 }
 
 // ============================================================
-// 10. VERIFICAÇÃO DE CONQUISTAS (COM ÍCONE CORRIGIDO)
+// 10. VERIFICAÇÃO DE CONQUISTAS (COM ÍCONE DA CONQUISTA)
 // ============================================================
 async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
   if (!gamesToCheck?.length) return;
@@ -638,8 +638,8 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
       const progresso = `${progressoAtual}/${totalJogo}`;
       const nomeBonito = await getAchievementDisplayName(appid, ach.apiname);
 
-      // 🔥 URL CORRIGIDA DO ÍCONE DA CONQUISTA (usando Cloudflare)
-      const iconUrl = ach.icon ? `https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/${appid}/${ach.icon}.jpg` : null;
+      // 🔥 CONSTRÓI A URL DO ÍCONE DA CONQUISTA
+      const iconUrl = ach.icon ? `https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/${appid}/${ach.icon}.jpg` : null;
 
       const embed = new EmbedBuilder()
         .setColor(0xFFD700)
@@ -653,18 +653,12 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
         .setFooter({ text: `+${novas.length} nova(s) conquista(s)` })
         .setTimestamp();
 
-      // 🔥 EXIBE O ÍCONE DA CONQUISTA (se disponível)
+      // 🔥 EXIBE O ÍCONE DA CONQUISTA
       if (iconUrl) {
         embed.setImage(iconUrl);
-      } else {
-        // Fallback: usa a capa do jogo se não houver ícone
-        const detalhes = await getGameDetails(appid);
-        if (detalhes?.header_image) {
-          embed.setImage(detalhes.header_image);
-        }
       }
 
-      // Opcional: adiciona a capa do jogo como thumbnail
+      // Também exibe a capa do jogo como thumbnail (opcional)
       const detalhes = await getGameDetails(appid);
       if (detalhes?.header_image) embed.setThumbnail(detalhes.header_image);
 
@@ -908,7 +902,7 @@ const client = new Client({
 console.log('🚀 [12] Cliente Discord criado.');
 
 // ============================================================
-// 13. EVENTO clientReady
+// 13. EVENTO clientReady (SEM ENVIO AUTOMÁTICO DE REGRAS)
 // ============================================================
 client.once('clientReady', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -938,6 +932,7 @@ client.once('clientReady', async () => {
       await enviarRanking();
     }
 
+    // Inicializa histórico se vazio
     if (Object.keys(db.historicoJogos).length === 0) {
       console.log('🔄 Criando histórico inicial de jogos...');
       for (const steamId of STEAM_IDS_ARRAY) {
@@ -949,6 +944,8 @@ client.once('clientReady', async () => {
       }
       await salvarDBNoCanal();
     }
+
+    // 🔥 NÃO ENVIA REGRAS AUTOMATICAMENTE – apenas o comando /regras faz isso
 
     // Registra comandos
     console.log('🔄 Registrando comandos...');
@@ -969,6 +966,8 @@ client.once('clientReady', async () => {
       console.error('❌ Erro ao registrar comandos:', err);
     }
 
+    // Inicia tarefas
+    console.log('🔄 Iniciando tarefas periódicas...');
     setInterval(checkAchievements, 30000);
     setInterval(checkNewGames, 300000);
     setInterval(verificarLancamentosQuero, 5 * 60 * 1000);
@@ -977,7 +976,7 @@ client.once('clientReady', async () => {
 
     try {
       const dono = await client.users.fetch(DONO_ID);
-      await dono.send('🚀 Bot Steam Família está online! Ícones de conquista corrigidos.');
+      await dono.send('🚀 Bot Steam Família está online! Use `/regras` para ver as regras.');
     } catch (_) {}
   } catch (err) {
     console.error('❌ ERRO FATAL NO EVENTO clientReady:', err);
@@ -1176,7 +1175,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.commandName === 'regras') {
     await interaction.deferReply({ ephemeral: true });
     try {
-      await enviarRegras();
+      await enviarRegras(); // Envia a mensagem no canal de regras
       await interaction.editReply('✅ Mensagem de regras enviada no canal <#' + RULES_CHANNEL + '>.');
     } catch (err) {
       await interaction.editReply(`❌ Erro ao enviar regras: ${err.message}`);
