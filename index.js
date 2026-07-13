@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COM REGRAS E COMANDOS
+// BOT STEAM FAMÍLIA - COM REGRAS E COMANDOS (CORRIGIDO)
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
@@ -533,7 +533,7 @@ async function enviarRanking() {
 console.log('🚀 [10] Funções de ranking carregadas.');
 
 // ============================================================
-// 9. ENVIO DE REGRAS E COMANDOS
+// 9. ENVIO DE REGRAS E COMANDOS (CORRIGIDO)
 // ============================================================
 async function enviarRegras() {
   const channel = client.channels.cache.get(RULES_CHANNEL);
@@ -542,10 +542,14 @@ async function enviarRegras() {
     return;
   }
 
-  // Verifica se já existe uma mensagem de regras no canal
+  // Verifica se já existe uma mensagem de regras do bot no canal
   try {
-    const messages = await channel.messages.fetch({ limit: 10 });
-    const rulesMsg = messages.find(m => m.author.id === client.user.id && m.content.includes('📜 REGRAS DO SERVIDOR'));
+    const messages = await channel.messages.fetch({ limit: 50 });
+    const rulesMsg = messages.find(m => 
+      m.author.id === client.user.id && 
+      m.embeds.length > 0 && 
+      m.embeds[0]?.title?.includes('REGRAS DO SERVIDOR')
+    );
     if (rulesMsg) {
       console.log('📜 Mensagem de regras já existe. Pulando envio.');
       return;
@@ -943,7 +947,7 @@ client.once('clientReady', async () => {
       await salvarDBNoCanal();
     }
 
-    // 🔥 ENVIA AS REGRAS NO CANAL DE REGRAS
+    // Envia as regras
     await enviarRegras();
 
     // Registra comandos
@@ -1086,20 +1090,28 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // /quero-listar
+  // /quero-listar (CORRIGIDO)
   if (interaction.commandName === 'quero-listar') {
     await interaction.deferReply({ ephemeral: true });
-    const lista = await listarQuero(interaction.user.id);
-    if (!lista.length) {
-      await interaction.editReply('📭 Sua lista /quero está vazia.');
-      return;
+    try {
+      const lista = await listarQuero(interaction.user.id);
+      if (!lista.length) {
+        await interaction.editReply('📭 Sua lista /quero está vazia.');
+        return;
+      }
+      const embed = new EmbedBuilder()
+        .setColor(0x00AE86)
+        .setTitle(`📋 Sua lista /quero (${lista.length} jogos)`)
+        .setDescription(lista.slice(0, 20).map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n'));
+      // Só adiciona footer se houver mais de 20 jogos
+      if (lista.length > 20) {
+        embed.setFooter({ text: `Mostrando 20 de ${lista.length}` });
+      }
+      await interaction.editReply({ embeds: [embed] });
+    } catch (err) {
+      console.error('❌ Erro no /quero-listar:', err);
+      await interaction.editReply('❌ Erro ao listar seus jogos. Tente novamente.');
     }
-    const embed = new EmbedBuilder()
-      .setColor(0x00AE86)
-      .setTitle(`📋 Sua lista /quero (${lista.length} jogos)`)
-      .setDescription(lista.slice(0, 20).map((j, i) => `**${i+1}.** [${j.nome}](${j.link})`).join('\n'))
-      .setFooter({ text: lista.length > 20 ? `Mostrando 20 de ${lista.length}` : '' });
-    await interaction.editReply({ embeds: [embed] });
   }
 
   // /quero-remover
@@ -1137,7 +1149,6 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.commandName === 'regras') {
     await interaction.deferReply({ ephemeral: true });
     try {
-      // Envia as regras novamente no canal onde o comando foi executado
       const embed = new EmbedBuilder()
         .setColor(0x00AE86)
         .setTitle('📜 REGRAS DO SERVIDOR')
