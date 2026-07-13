@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - COMPLETO COM ÍCONE DE CONQUISTA
+// BOT STEAM FAMÍLIA - SEM ENVIO AUTOMÁTICO DE REGRAS
 // ============================================================
 
 console.log('🚀 [1] Iniciando o script...');
@@ -534,7 +534,7 @@ async function enviarRanking() {
 console.log('🚀 [10] Funções de ranking carregadas.');
 
 // ============================================================
-// 9. ENVIO DE REGRAS (APENAS SE NÃO EXISTIR)
+// 9. FUNÇÃO DE REGRAS (APENAS PARA O COMANDO /regras)
 // ============================================================
 async function enviarRegras() {
   const channel = client.channels.cache.get(RULES_CHANNEL);
@@ -542,16 +542,6 @@ async function enviarRegras() {
     console.error('❌ Canal de regras não encontrado!');
     return;
   }
-
-  // Verifica se já existe uma mensagem de regras do bot
-  try {
-    const messages = await channel.messages.fetch({ limit: 10 });
-    const rulesMsg = messages.find(m => m.author.id === client.user.id && m.content.includes('📜 REGRAS DO SERVIDOR'));
-    if (rulesMsg) {
-      console.log('📜 Mensagem de regras já existe. Pulando envio.');
-      return;
-    }
-  } catch (_) {}
 
   const embed = new EmbedBuilder()
     .setColor(0x00AE86)
@@ -912,12 +902,12 @@ const client = new Client({
 console.log('🚀 [12] Cliente Discord criado.');
 
 // ============================================================
-// 13. EVENTO clientReady
+// 13. EVENTO clientReady (SEM ENVIO AUTOMÁTICO DE REGRAS)
 // ============================================================
 client.once('clientReady', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
   console.log(`📋 Banco de dados armazenado como anexo no canal: <#${QUERO_CHANNEL}>`);
-  console.log(`📜 Canal de regras: <#${RULES_CHANNEL}>`);
+  console.log(`📜 Canal de regras: <#${RULES_CHANNEL}> (envio manual via /regras)`);
 
   try {
     await inicializarDB();
@@ -955,8 +945,7 @@ client.once('clientReady', async () => {
       await salvarDBNoCanal();
     }
 
-    // Envia regras apenas se não houver mensagem de regras no canal
-    await enviarRegras();
+    // 🔥 NÃO ENVIA REGRAS AUTOMATICAMENTE – apenas o comando /regras faz isso
 
     // Registra comandos
     console.log('🔄 Registrando comandos...');
@@ -987,7 +976,7 @@ client.once('clientReady', async () => {
 
     try {
       const dono = await client.users.fetch(DONO_ID);
-      await dono.send('🚀 Bot Steam Família está online! Ícone de conquistas ativado.');
+      await dono.send('🚀 Bot Steam Família está online! Use `/regras` para ver as regras.');
     } catch (_) {}
   } catch (err) {
     console.error('❌ ERRO FATAL NO EVENTO clientReady:', err);
@@ -1130,7 +1119,6 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle(`📋 Sua lista /quero (${totalJogos} jogos)`)
         .setDescription(descricao);
 
-      // SÓ ADICIONA FOOTER SE HOUVER TEXTO
       if (totalJogos > 20) {
         embed.setFooter({ text: `Mostrando 20 de ${totalJogos}` });
       }
@@ -1187,45 +1175,10 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.commandName === 'regras') {
     await interaction.deferReply({ ephemeral: true });
     try {
-      const embed = new EmbedBuilder()
-        .setColor(0x00AE86)
-        .setTitle('📜 REGRAS DO SERVIDOR')
-        .setThumbnail('https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/1200px-Steam_icon_logo.svg.png')
-        .setDescription(
-          '**Bem-vindo à Família Steam!** 🎮\n\n' +
-          '**📌 REGRAS GERAIS**\n' +
-          '1️⃣ **Respeito acima de tudo** – Nada de ofensas, discurso de ódio ou assédio.\n' +
-          '2️⃣ **Sem spam ou flood** – Evite enviar mensagens repetitivas ou conteúdo irrelevante.\n' +
-          '3️⃣ **Conteúdo apropriado** – Nada de NSFW, gore ou material impróprio.\n' +
-          '4️⃣ **Divulgação proibida** – Não divulgue outros servidores, produtos ou serviços sem permissão.\n' +
-          '5️⃣ **Use os canais certos** – Cada canal tem um propósito. Respeite as categorias.\n' +
-          '6️⃣ **Seja ativo e participe** – A família cresce com a interação de todos!\n\n' +
-          '**🤖 COMANDOS DISPONÍVEIS**\n' +
-          '`/tem [jogo]` – Verifica se um jogo está na biblioteca da família.\n' +
-          '`/ranking` – Mostra o ranking de jogos da família.\n' +
-          '`/quero [jogo]` – Adiciona um jogo à sua lista de desejos.\n' +
-          '`/quero-listar` – Lista os jogos da sua lista /quero.\n' +
-          '`/quero-remover [jogo]` – Remove um jogo da sua lista /quero.\n' +
-          '`/dbstatus` – Status do banco de dados (apenas dono).\n' +
-          '`/regras` – Exibe esta mensagem novamente.\n\n' +
-          '**🔔 NOTIFICAÇÕES**\n' +
-          '• 🆕 Novos jogos compatíveis são anunciados com `@everyone`.\n' +
-          '• 🏆 Conquistas são monitoradas e notificadas no canal de conquistas.\n' +
-          '• 📢 Lançamentos e promoções de jogos da sua lista `/quero` são enviados por DM.\n\n' +
-          '**📌 CANAIS IMPORTANTES**\n' +
-          `• 📢 **Notificações:** <#${CHANNEL_ID}>\n` +
-          `• 🏆 **Conquistas:** <#${ACHIEVEMENT_CHANNEL_ID}>\n` +
-          `• 📋 **Ranking:** <#${RANKING_CHANNEL_ID}>\n` +
-          `• 📜 **Regras:** <#${RULES_CHANNEL}>\n\n` +
-          '**✅ REGRAS SUJEITAS A MUDANÇAS** – A administração pode atualizar as regras a qualquer momento.\n' +
-          '**Divirta-se e bem-vindo à família!** 🚀'
-        )
-        .setTimestamp()
-        .setFooter({ text: 'Steam Família - Regras e Comandos', iconURL: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/1200px-Steam_icon_logo.svg.png' });
-
-      await interaction.editReply({ embeds: [embed] });
+      await enviarRegras(); // Envia a mensagem no canal de regras
+      await interaction.editReply('✅ Mensagem de regras enviada no canal <#' + RULES_CHANNEL + '>.');
     } catch (err) {
-      await interaction.editReply(`❌ Erro: ${err.message}`);
+      await interaction.editReply(`❌ Erro ao enviar regras: ${err.message}`);
     }
   }
 });
